@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+backtests/
+*.log
+.pytest_cache/
+*.pyc
+.DS_Store
+._*
+__MACOSX/
+node_modules/
+.next/
+*.tsbuildinfo
