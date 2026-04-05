@@ -1,4 +1,6 @@
 :root {
+  --font-sans: "Space Grotesk", "Trebuchet MS", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", "Consolas", "Courier New", monospace;
   --line: #0a0810;
   --paper: rgba(26, 22, 34, 0.98);
   --paper-soft: rgba(39, 32, 54, 0.96);

@@ -7,8 +7,19 @@ function Stop-ManagedProcess {
     param(
         [string]$Name,
         [string]$PidFile,
-        [string]$CommandPattern = ""
+        [string]$CommandPattern = "",
+        [int]$Port = 0
     )
+
+    if ($Port -gt 0) {
+        $listener = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($listener) {
+            Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+            Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+            Write-Host "Stopped $Name (PID $($listener.OwningProcess))"
+            return
+        }
+    }
 
     if (!(Test-Path $PidFile)) {
         if ($CommandPattern) {
@@ -53,4 +64,4 @@ function Stop-ManagedProcess {
 Stop-ManagedProcess -Name "Cloudflare Tunnel" -PidFile (Join-Path $pidsDir "cloudflared.pid") -CommandPattern "tunnel run dead-market-dashboard"
 Stop-ManagedProcess -Name "Live Bot" -PidFile (Join-Path $pidsDir "bot.pid") -CommandPattern "main.py --env-file .env live"
 Stop-ManagedProcess -Name "Dashboard Bridge" -PidFile (Join-Path $pidsDir "bridge.pid") -CommandPattern "dashboard_live_bridge.py --env-file .env"
-Stop-ManagedProcess -Name "Dashboard" -PidFile (Join-Path $pidsDir "dashboard.pid") -CommandPattern "dashboard\\.next\\standalone\\server.js"
+Stop-ManagedProcess -Name "Dashboard" -PidFile (Join-Path $pidsDir "dashboard.pid") -CommandPattern "server.js" -Port 3000

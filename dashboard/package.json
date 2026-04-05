@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "next dev",
+    "dev": "set NEXT_BUILD_DIR=.next-dev && next dev",
     "build": "next build && node scripts/copy-standalone-assets.mjs",
     "start": "next start",
     "lint": "next lint"

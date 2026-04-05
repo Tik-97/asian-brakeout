@@ -620,14 +620,18 @@ export function Dashboard({ data }: { data: TradingHouseData }) {
   const equityValues = currentData.events.map((row) => Number(row.trading_equity));
   const totalValuePath = buildLinePath(totalValues, 620, 150);
   const equityPath = buildLinePath(equityValues, 620, 150);
-  const bestWin = currentData.wins.reduce((best, row) => {
-    const pnl = Number(row.portfolio_pnl_account);
-    return pnl > best ? pnl : best;
-  }, Number.NEGATIVE_INFINITY);
-  const worstLoss = currentData.losses.reduce((worst, row) => {
-    const pnl = Number(row.portfolio_pnl_account);
-    return pnl < worst ? pnl : worst;
-  }, Number.POSITIVE_INFINITY);
+  const bestWin = currentData.wins.length
+    ? currentData.wins.reduce((best, row) => {
+        const pnl = Number(row.portfolio_pnl_account);
+        return pnl > best ? pnl : best;
+      }, Number.NEGATIVE_INFINITY)
+    : 0;
+  const worstLoss = currentData.losses.length
+    ? currentData.losses.reduce((worst, row) => {
+        const pnl = Number(row.portfolio_pnl_account);
+        return pnl < worst ? pnl : worst;
+      }, Number.POSITIVE_INFINITY)
+    : 0;
 
   const trackedPairs = useMemo(
     () => Array.from(new Set(currentData.trades.map((row) => row.symbol))),

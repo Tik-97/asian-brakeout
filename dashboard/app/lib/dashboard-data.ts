@@ -1,5 +1,10 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const dataDir = path.resolve(__dirname, "../../public/data");
 
 export type Summary = {
   AccountCurrency: string;
@@ -133,12 +138,12 @@ function parseCsv<T>(text: string): T[] {
 }
 
 async function readDataFile(fileName: string) {
-  const filePath = path.join(process.cwd(), "public", "data", fileName);
+  const filePath = path.join(dataDir, fileName);
   return fs.readFile(filePath, "utf-8");
 }
 
 async function readOptionalDataFile(fileName: string) {
-  const filePath = path.join(process.cwd(), "public", "data", fileName);
+  const filePath = path.join(dataDir, fileName);
   try {
     return await fs.readFile(filePath, "utf-8");
   } catch (error) {

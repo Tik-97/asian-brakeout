@@ -27,7 +27,7 @@ def parse_candles(data):
             "high": _extract_price_side(high_price, "bid"),
             "low": _extract_price_side(low_price, "bid"),
             "close": _extract_price_side(close_price, "bid"),
-            "volume": candle.get("lastTradedVolume"),
+            "volume": c.get("lastTradedVolume"),
         })
 
     df = pd.DataFrame(rows)

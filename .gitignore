@@ -12,3 +12,6 @@ __MACOSX/
 node_modules/
 .next/
 *.tsbuildinfo
+runtime/pids/
+dashboard/public/data/live_dashboard.json
+dashboard/public/data/local_miniapp_url.json
