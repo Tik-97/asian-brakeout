@@ -479,8 +479,12 @@ class AsianBreakoutBot:
         account_info = self.api.get_account_info()
         account_prefs = self.api.get_account_preferences()
         account_ccy = self.get_account_currency()
-        available = account_metrics(account_info).get("available")
-        if available is not None and available < self.config.strategy.min_free_margin_usd:
+        metrics = account_metrics(account_info)
+        balance = metrics.get("balance")
+        if balance is None or balance <= 0:
+            return
+        dynamic_target_margin = float(balance * self.config.strategy.portfolio_margin_fraction)
+        if dynamic_target_margin <= 0:
             return
 
         for symbol, epic in self.config.strategy.symbols.items():
@@ -569,7 +573,7 @@ class AsianBreakoutBot:
                     entry_price=entry,
                     market_info=market_info,
                     account_preferences=account_prefs,
-                    target_margin=self.config.strategy.target_margin_usd,
+                    target_margin=dynamic_target_margin,
                     leverage_overrides=self.config.strategy.target_leverage_by_type,
                     margin_to_account_rate=margin_to_account_rate,
                 )

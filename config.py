@@ -55,8 +55,9 @@ class StrategyConfig:
     atr_period: int = 14
     atr_filter_pct: float = 0.1
     tp_multiplier: float = 2.0
+    portfolio_margin_fraction: float = 0.25
     target_margin_usd: float = 20.0
-    min_free_margin_usd: float = 20.0
+    min_free_margin_usd: float = 0.0
     session_start_hour_utc: int = 9
     asian_session_end_hour_utc: int = 8
     entry_start_hour_utc: int = 10
@@ -119,6 +120,16 @@ def _env(name: str, default: str | None = None, required: bool = False) -> str:
 def _env_float(name: str, default: float) -> float:
     value = os.getenv(name)
     return float(value) if value is not None else default
+
+
+def _env_fraction(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    parsed = float(value)
+    if parsed > 1:
+        parsed = parsed / 100.0
+    return parsed
 
 
 def _env_int(name: str, default: int) -> int:
@@ -186,8 +197,9 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         atr_period=_env_int("AB_ATR_PERIOD", 14),
         atr_filter_pct=_env_float("AB_ATR_FILTER_PCT", 0.1),
         tp_multiplier=_env_float("AB_TP_MULTIPLIER", 2.0),
+        portfolio_margin_fraction=_env_fraction("AB_PORTFOLIO_MARGIN_FRACTION", 0.25),
         target_margin_usd=_env_float("AB_TARGET_MARGIN_USD", 20.0),
-        min_free_margin_usd=_env_float("AB_MIN_FREE_MARGIN_USD", 20.0),
+        min_free_margin_usd=_env_float("AB_MIN_FREE_MARGIN_USD", 0.0),
         session_start_hour_utc=_env_int("AB_SESSION_START_HOUR_UTC", 9),
         asian_session_end_hour_utc=_env_int("AB_ASIAN_SESSION_END_HOUR_UTC", 8),
         entry_start_hour_utc=_env_int("AB_ENTRY_START_HOUR_UTC", 10),
