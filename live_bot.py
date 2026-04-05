@@ -15,7 +15,14 @@ from runtime_state import is_bot_enabled
 from session_utils import current_session_date, parse_utc_timestamp, trade_day_from_runtime_fields
 from sizing_live import choose_size_for_target_margin_live
 from state import init_symbols, load_state, record_closed_trade, state, update_symbol
-from strategy import StrategyParameters, atr_filter, calculate_levels, check_breakout
+from strategy import (
+    StrategyParameters,
+    atr_filter,
+    build_relative_signal_volume_frame,
+    calculate_levels,
+    check_breakout,
+    passes_relative_signal_volume_filter,
+)
 from telegram_bot import TelegramNotifier
 from trade_history import sync_closed_trades, sync_closed_trades_archive
 
@@ -252,6 +259,13 @@ class AsianBreakoutBot:
                     asian_low=None,
                     trade_taken_today=bool(symbol_state.get("daily_trades")) or active_trade_day == session_date,
                     last_processed_signal_candle=None,
+                    last_breakout_detected_at=None,
+                    last_breakout_side=None,
+                    last_entry_candidate=None,
+                    last_stop_loss=None,
+                    last_take_profit=None,
+                    last_relative_volume=None,
+                    last_block_reason=None,
                 )
                 symbol_state = state.get(symbol, {})
 
@@ -487,6 +501,11 @@ class AsianBreakoutBot:
                 df = parse_candles(self.api.get_candles(epic, resolution="HOUR", max_candles=self.config.strategy.history_candles))
                 if df.empty or len(df) < self.config.strategy.atr_period + 5:
                     continue
+                relative_volume_frame = (
+                    build_relative_signal_volume_frame(df)
+                    if self.config.strategy.signal_relative_volume_threshold > 0
+                    else None
+                )
 
                 signal, candle_time = check_breakout(df, asian_high, asian_low)
                 if not signal:
@@ -498,10 +517,51 @@ class AsianBreakoutBot:
                 entry = asian_high if signal == "BUY" else asian_low
                 atr_value = atr_filter(df, entry, self.strategy_params)
                 if atr_value is None:
-                    update_symbol(symbol, last_processed_signal_candle=candle_key)
+                    update_symbol(
+                        symbol,
+                        last_processed_signal_candle=candle_key,
+                        last_breakout_detected_at=candle_key,
+                        last_breakout_side=signal,
+                        last_entry_candidate=entry,
+                        last_stop_loss=None,
+                        last_take_profit=None,
+                        last_relative_volume=None,
+                        last_block_reason="ATR filter blocked entry",
+                    )
                     continue
 
                 stop_loss, take_profit = calculate_levels(entry, atr_value, signal, self.strategy_params)
+                relative_volume_value = None
+                if relative_volume_frame is not None:
+                    relative_volume_subset = relative_volume_frame[relative_volume_frame["time"] == candle_time]
+                    if not relative_volume_subset.empty:
+                        raw_relative_volume = relative_volume_subset.iloc[-1]["rel_volume"]
+                        if raw_relative_volume is not None:
+                            relative_volume_value = float(raw_relative_volume)
+                    if not passes_relative_signal_volume_filter(
+                        signal_time=candle_time,
+                        min_relative_volume=self.config.strategy.signal_relative_volume_threshold,
+                        relative_volume_frame=relative_volume_frame,
+                    ):
+                        threshold = self.config.strategy.signal_relative_volume_threshold
+                        reason = (
+                            f"Relative volume {relative_volume_value:.2f} below {threshold:.2f}"
+                            if relative_volume_value is not None
+                            else f"Relative volume unavailable below {threshold:.2f}"
+                        )
+                        update_symbol(
+                            symbol,
+                            last_processed_signal_candle=candle_key,
+                            last_breakout_detected_at=candle_key,
+                            last_breakout_side=signal,
+                            last_entry_candidate=entry,
+                            last_stop_loss=stop_loss,
+                            last_take_profit=take_profit,
+                            last_relative_volume=relative_volume_value,
+                            last_block_reason=reason,
+                        )
+                        continue
+
                 market_info = self.api.get_market_details(epic)
                 margin_currency = market_info.get("instrument", {}).get("currency")
                 margin_to_account_rate = self.get_margin_to_account_rate(margin_currency, account_ccy)
@@ -514,7 +574,17 @@ class AsianBreakoutBot:
                     margin_to_account_rate=margin_to_account_rate,
                 )
                 if not size_info.get("ok"):
-                    update_symbol(symbol, last_processed_signal_candle=candle_key)
+                    update_symbol(
+                        symbol,
+                        last_processed_signal_candle=candle_key,
+                        last_breakout_detected_at=candle_key,
+                        last_breakout_side=signal,
+                        last_entry_candidate=entry,
+                        last_stop_loss=stop_loss,
+                        last_take_profit=take_profit,
+                        last_relative_volume=relative_volume_value,
+                        last_block_reason=f"Size calc failed: {size_info.get('reason')}",
+                    )
                     self.send_dedup(
                         f"size_fail:{symbol}:{candle_key}",
                         (
@@ -554,7 +624,17 @@ class AsianBreakoutBot:
                 )
                 working_order_id = result.get("dealId")
                 if not working_order_id:
-                    update_symbol(symbol, last_processed_signal_candle=candle_key)
+                    update_symbol(
+                        symbol,
+                        last_processed_signal_candle=candle_key,
+                        last_breakout_detected_at=candle_key,
+                        last_breakout_side=signal,
+                        last_entry_candidate=entry,
+                        last_stop_loss=stop_loss,
+                        last_take_profit=take_profit,
+                        last_relative_volume=relative_volume_value,
+                        last_block_reason=f"Order not confirmed: {result.get('reason') or result.get('status')}",
+                    )
                     self.send_dedup(
                         f"submit_fail:{symbol}:{candle_key}",
                         (
@@ -580,6 +660,13 @@ class AsianBreakoutBot:
                     active_trade_day_utc=str(current_session_date(dt.datetime.now(dt.timezone.utc), self.config.strategy.session_start_hour_utc)),
                     last_trade_direction=signal,
                     last_processed_signal_candle=candle_key,
+                    last_breakout_detected_at=candle_key,
+                    last_breakout_side=signal,
+                    last_entry_candidate=entry,
+                    last_stop_loss=stop_loss,
+                    last_take_profit=take_profit,
+                    last_relative_volume=relative_volume_value,
+                    last_block_reason=None,
                 )
                 self.send_dedup(
                     f"submitted:{symbol}:{candle_key}",

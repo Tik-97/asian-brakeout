@@ -118,6 +118,27 @@ type LiveDashboardPayload = DashboardData & {
   liveStatus?: LiveStatus | null;
 };
 
+const preferredRoomOrder = ["EURJPY", "GBPJPY", "USDJPY", "AUDJPY"];
+
+const staticDashboardFallbacks = [
+  {
+    summary: "yearly_backtest_2025_2026_USDJPY_GBPJPY_EURJPY_AUDJPY_summary.json",
+    trades: "yearly_backtest_2025_2026_USDJPY_GBPJPY_EURJPY_AUDJPY_real_traded.csv",
+    wins: "yearly_backtest_2025_2026_USDJPY_GBPJPY_EURJPY_AUDJPY_real_wins.csv",
+    losses: "yearly_backtest_2025_2026_USDJPY_GBPJPY_EURJPY_AUDJPY_real_losses.csv",
+    events: "yearly_backtest_2025_2026_USDJPY_GBPJPY_EURJPY_AUDJPY_events.csv",
+    withdrawals: "yearly_backtest_2025_2026_USDJPY_GBPJPY_EURJPY_AUDJPY_withdrawals.csv",
+  },
+  {
+    summary: "yearly_backtest_2025_2026_GBPJPY_EURJPY_summary.json",
+    trades: "yearly_backtest_2025_2026_GBPJPY_EURJPY_real_traded.csv",
+    wins: "yearly_backtest_2025_2026_GBPJPY_EURJPY_real_wins.csv",
+    losses: "yearly_backtest_2025_2026_GBPJPY_EURJPY_real_losses.csv",
+    events: "yearly_backtest_2025_2026_GBPJPY_EURJPY_events.csv",
+    withdrawals: "yearly_backtest_2025_2026_GBPJPY_EURJPY_withdrawals.csv",
+  },
+];
+
 function parseCsv<T>(text: string): T[] {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -190,22 +211,50 @@ export async function loadDashboardData(): Promise<LiveDashboardPayload> {
     return liveDashboard;
   }
 
-  const [summaryText, tradesText, winsText, lossesText, eventsText, withdrawalsText] = await Promise.all([
-    readDataFile("yearly_backtest_2025_2026_GBPJPY_EURJPY_summary.json"),
-    readDataFile("yearly_backtest_2025_2026_GBPJPY_EURJPY_real_traded.csv"),
-    readDataFile("yearly_backtest_2025_2026_GBPJPY_EURJPY_real_wins.csv"),
-    readDataFile("yearly_backtest_2025_2026_GBPJPY_EURJPY_real_losses.csv"),
-    readDataFile("yearly_backtest_2025_2026_GBPJPY_EURJPY_events.csv"),
-    readDataFile("yearly_backtest_2025_2026_GBPJPY_EURJPY_withdrawals.csv"),
-  ]);
+  for (const fallback of staticDashboardFallbacks) {
+    const summaryText = await readOptionalDataFile(fallback.summary);
+    if (!summaryText) {
+      continue;
+    }
+    const [tradesText, winsText, lossesText, eventsText, withdrawalsText] = await Promise.all([
+      readOptionalDataFile(fallback.trades),
+      readOptionalDataFile(fallback.wins),
+      readOptionalDataFile(fallback.losses),
+      readOptionalDataFile(fallback.events),
+      readOptionalDataFile(fallback.withdrawals),
+    ]);
+
+    return {
+      summary: JSON.parse(summaryText) as Summary,
+      trades: parseCsv<TradeRow>(tradesText ?? ""),
+      wins: parseCsv<TradeRow>(winsText ?? ""),
+      losses: parseCsv<TradeRow>(lossesText ?? ""),
+      events: parseCsv<EventRow>(eventsText ?? ""),
+      withdrawals: parseCsv<WithdrawalRow>(withdrawalsText ?? ""),
+    };
+  }
 
   return {
-    summary: JSON.parse(summaryText) as Summary,
-    trades: parseCsv<TradeRow>(tradesText),
-    wins: parseCsv<TradeRow>(winsText),
-    losses: parseCsv<TradeRow>(lossesText),
-    events: parseCsv<EventRow>(eventsText),
-    withdrawals: parseCsv<WithdrawalRow>(withdrawalsText),
+    summary: {
+      AccountCurrency: "USD",
+      InitialDepositUSD: 400,
+      PriceModel: "Live Capital.com account snapshot",
+      NetPnLUSD: 0,
+      TotalWithdrawnUSD: 0,
+      FinalTradingEquityUSD: 400,
+      EndingTotalValueUSD: 400,
+      ReturnPctOnInitial: 0,
+      AcceptedTrades: 0,
+      WinRatePct: 0,
+      ProfitFactor: 0,
+      MaxDrawdownTotalValuePct: 0,
+      TotalOvernightFundingUSD: 0,
+    },
+    trades: [],
+    wins: [],
+    losses: [],
+    events: [],
+    withdrawals: [],
   };
 }
 
@@ -221,10 +270,31 @@ function pairMeta(symbol: string) {
       roomTheme: "euro",
     };
   }
+  if (symbol === "GBPJPY") {
+    return {
+      title: "Room 2",
+      personality: "Aggressive, energetic, reactive",
+      roomTheme: "sterling",
+    };
+  }
+  if (symbol === "USDJPY") {
+    return {
+      title: "Room 3",
+      personality: "Steady, tactical, patient",
+      roomTheme: "dollar",
+    };
+  }
+  if (symbol === "AUDJPY") {
+    return {
+      title: "Room 4",
+      personality: "Wild, momentum-driven, scrappy",
+      roomTheme: "aussie",
+    };
+  }
   return {
-    title: "Room 2",
-    personality: "Aggressive, energetic, reactive",
-    roomTheme: "sterling",
+    title: "Scout Room",
+    personality: "Adaptive, unclassified",
+    roomTheme: "neutral",
   };
 }
 
@@ -254,11 +324,17 @@ export async function loadTradingHouseData(): Promise<TradingHouseData> {
   const base = await loadDashboardData();
   const liveStatusText = await readOptionalDataFile("live_status.json");
   const acceptedTrades = base.trades.filter((trade) => String(trade.accepted).toLowerCase() !== "false");
-  const symbols = ["EURJPY", "GBPJPY"];
+  const symbols = Array.from(
+    new Set([
+      ...preferredRoomOrder,
+      ...((base.liveStatus?.pairs ?? []).map((pair) => pair.symbol)),
+      ...acceptedTrades.map((trade) => trade.symbol),
+    ]),
+  );
 
   const rooms: PairRoomData[] = symbols.map((symbol) => {
     const trades = acceptedTrades.filter((trade) => trade.symbol === symbol);
-    let runningContribution = base.summary.InitialDepositUSD / symbols.length;
+    let runningContribution = base.summary.InitialDepositUSD / Math.max(symbols.length, 1);
     const curveValues = trades.map((trade) => {
       runningContribution += Number(trade.portfolio_pnl_account);
       return round2(runningContribution);
@@ -275,7 +351,7 @@ export async function loadTradingHouseData(): Promise<TradingHouseData> {
       title: meta.title,
       personality: meta.personality,
       roomTheme: meta.roomTheme,
-      contributionBalance: curveValues.at(-1) ?? base.summary.InitialDepositUSD / symbols.length,
+      contributionBalance: curveValues.at(-1) ?? base.summary.InitialDepositUSD / Math.max(symbols.length, 1),
       contributionPnl: round2(trades.reduce((sum, trade) => sum + Number(trade.portfolio_pnl_account), 0)),
       winRatePct: trades.length ? (wins / trades.length) * 100 : 0,
       wins,

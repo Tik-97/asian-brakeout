@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>USDJPY</title>
+  <rect x="4" y="8" width="56" height="48" rx="10" fill="#132235" stroke="#f2efe6" stroke-width="3"/>
+  <path d="M4 26h56v12H4z" fill="#f2efe6"/>
+  <circle cx="18" cy="32" r="7" fill="#c93f3f"/>
+  <path d="M36 18h16v4H36zm0 8h16v4H36zm0 8h16v4H36zm0 8h16v4H36z" fill="#7fb4ff"/>
+</svg>

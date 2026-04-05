@@ -6,12 +6,14 @@ import importlib
 import pandas as pd
 
 import backtest
+import config as config_module
 from config import StrategyConfig
 import market_hours
 from regime_guard import RegimeGuardTracker, regime_guard_settings_from_strategy
 import runtime_state as runtime_state_module
 import session_utils
 import state as state_module
+import strategy as strategy_module
 
 
 def test_current_session_date_respects_env_override(monkeypatch):
@@ -22,6 +24,26 @@ def test_current_session_date_respects_env_override(monkeypatch):
 
     assert session_utils.current_session_date(before_session_start) == dt.date(2026, 4, 2)
     assert session_utils.current_session_date(after_session_start) == dt.date(2026, 4, 3)
+
+
+def test_load_config_reads_signal_relative_volume_threshold(monkeypatch, tmp_path):
+    env_path = tmp_path / "test.env"
+    env_path.write_text("", encoding="utf-8")
+    monkeypatch.setenv("CAPITAL_API_KEY", "test")
+    monkeypatch.setenv("CAPITAL_IDENTIFIER", "test")
+    monkeypatch.setenv("CAPITAL_PASSWORD", "test")
+    monkeypatch.setenv("AB_SYMBOLS", "EURJPY,GBPJPY,USDJPY,AUDJPY")
+    monkeypatch.setenv("AB_SIGNAL_RELATIVE_VOLUME_THRESHOLD", "1.5")
+
+    loaded = config_module.load_config(env_path)
+
+    assert loaded.strategy.symbols == {
+        "EURJPY": "EURJPY",
+        "GBPJPY": "GBPJPY",
+        "USDJPY": "USDJPY",
+        "AUDJPY": "AUDJPY",
+    }
+    assert loaded.strategy.signal_relative_volume_threshold == 1.5
 
 
 def test_friday_trade_day_uses_pre_weekend_deadlines():
@@ -256,6 +278,31 @@ def test_trade_friction_points_uses_current_spread_proxy():
     assert round(spread_points, 6) == 0.0005
     assert round(slippage_per_side, 6) == 0.000125
     assert round(total_friction, 6) == 0.00075
+
+
+def test_relative_signal_volume_filter_requires_threshold():
+    history = pd.DataFrame(
+        [
+            {
+                "time": pd.Timestamp("2026-04-01T00:00:00Z") + dt.timedelta(hours=index),
+                "volume": 100 if index < 20 else 170,
+            }
+            for index in range(21)
+        ]
+    )
+
+    volume_frame = strategy_module.build_relative_signal_volume_frame(history, lookback=20)
+
+    assert strategy_module.passes_relative_signal_volume_filter(
+        signal_time=dt.datetime(2026, 4, 1, 20, 0, tzinfo=dt.timezone.utc),
+        min_relative_volume=1.5,
+        relative_volume_frame=volume_frame,
+    ) is True
+    assert strategy_module.passes_relative_signal_volume_filter(
+        signal_time=dt.datetime(2026, 4, 1, 20, 0, tzinfo=dt.timezone.utc),
+        min_relative_volume=1.8,
+        relative_volume_frame=volume_frame,
+    ) is False
 
 
 def test_resolve_time_exit_uses_last_pre_deadline_close():

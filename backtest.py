@@ -758,7 +758,8 @@ def run_symbol_backtest_in_range(
     partial_take_profit_r_multiple: float = 1.0,
     gbpjpy_disable_sell: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
-    epic = config.strategy.symbols[symbol]
+    symbol = symbol.upper()
+    epic = config.strategy.symbols.get(symbol, symbol)
     requested_start = (
         dt.datetime.combine(start_date, dt.time(0, 0, tzinfo=dt.timezone.utc))
         if start_date is not None
@@ -1257,7 +1258,7 @@ def run_backtests(
     partial_take_profit_r_multiple: float = 1.0,
     gbpjpy_disable_sell: bool = False,
 ) -> dict[str, dict[str, float]]:
-    selected_symbols = symbols or list(config.strategy.symbols.keys())
+    selected_symbols = [symbol.upper() for symbol in (symbols or list(config.strategy.symbols.keys()))]
     config.backtest.output_dir.mkdir(parents=True, exist_ok=True)
     summaries: dict[str, dict[str, float]] = {}
 
@@ -1330,7 +1331,7 @@ def run_portfolio_backtest(
     partial_take_profit_r_multiple: float = 1.0,
     gbpjpy_disable_sell: bool = False,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
-    selected_symbols = symbols or list(config.strategy.symbols.keys())
+    selected_symbols = [symbol.upper() for symbol in (symbols or list(config.strategy.symbols.keys()))]
     candidate_frames: list[pd.DataFrame] = []
     guard_settings = regime_guard_settings_from_strategy(config.strategy)
     guard_trackers = {

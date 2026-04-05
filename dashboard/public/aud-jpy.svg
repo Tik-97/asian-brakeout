@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>AUDJPY</title>
+  <rect x="4" y="8" width="56" height="48" rx="10" fill="#143322" stroke="#f5efe4" stroke-width="3"/>
+  <path d="M4 36h56v20H4z" fill="#d1ad52"/>
+  <path d="M12 16h18v18H12z" fill="#234d7f"/>
+  <path d="M21 16v18M12 25h18" stroke="#f5efe4" stroke-width="3"/>
+  <circle cx="44" cy="24" r="6" fill="#f5efe4"/>
+  <circle cx="44" cy="24" r="2.5" fill="#d14e4e"/>
+</svg>

@@ -91,7 +91,7 @@ def run_backtest(
     gbpjpy_entry_signal_cutoff_hour_utc: int | None = None,
     max_signal_age_hours: float | None = None,
     vwap_direction_filter: bool = False,
-    signal_relative_volume_threshold: float = 0.0,
+    signal_relative_volume_threshold: float | None = None,
     breakout_close_buffer_atr_fraction: float = 0.0,
     partial_take_profit_fraction: float = 0.0,
     partial_take_profit_r_multiple: float = 1.0,
@@ -105,6 +105,11 @@ def run_backtest(
         {"CURRENCIES": currency_leverage}
         if currency_leverage is not None
         else None
+    )
+    resolved_signal_relative_volume_threshold = (
+        config.strategy.signal_relative_volume_threshold
+        if signal_relative_volume_threshold is None
+        else signal_relative_volume_threshold
     )
     summaries = run_backtests(
         api,
@@ -125,7 +130,7 @@ def run_backtest(
         gbpjpy_entry_signal_cutoff_hour_utc=gbpjpy_entry_signal_cutoff_hour_utc,
         max_signal_age_hours=max_signal_age_hours,
         vwap_direction_filter=vwap_direction_filter,
-        signal_relative_volume_threshold=signal_relative_volume_threshold,
+        signal_relative_volume_threshold=resolved_signal_relative_volume_threshold,
         breakout_close_buffer_atr_fraction=breakout_close_buffer_atr_fraction,
         partial_take_profit_fraction=partial_take_profit_fraction,
         partial_take_profit_r_multiple=partial_take_profit_r_multiple,
@@ -157,7 +162,7 @@ def run_backtest(
             gbpjpy_entry_signal_cutoff_hour_utc=gbpjpy_entry_signal_cutoff_hour_utc,
             max_signal_age_hours=max_signal_age_hours,
             vwap_direction_filter=vwap_direction_filter,
-            signal_relative_volume_threshold=signal_relative_volume_threshold,
+            signal_relative_volume_threshold=resolved_signal_relative_volume_threshold,
             breakout_close_buffer_atr_fraction=breakout_close_buffer_atr_fraction,
             partial_take_profit_fraction=partial_take_profit_fraction,
             partial_take_profit_r_multiple=partial_take_profit_r_multiple,
@@ -259,7 +264,7 @@ def parse_args() -> argparse.Namespace:
     backtest.add_argument(
         "--signal-relative-volume-threshold",
         type=float,
-        default=0.0,
+        default=None,
         help="Backtest-only filter: require signal candle volume divided by the average previous 20 H1 candle volume to be at least this threshold",
     )
     backtest.add_argument(

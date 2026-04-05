@@ -19,6 +19,7 @@ DEFAULT_SYMBOLS = (
     "NZDUSD",
     "EURJPY",
     "GBPJPY",
+    "AUDJPY",
 )
 
 
@@ -66,6 +67,7 @@ class StrategyConfig:
     weekend_close_minute_utc: int = DEFAULT_WEEKEND_CLOSE_MINUTE_UTC
     loop_interval_seconds: int = 20
     history_candles: int = 250
+    signal_relative_volume_threshold: float = 0.0
     regime_guard_enabled: bool = False
     regime_guard_lookback_trades: int = 6
     regime_guard_min_closed_trades: int = 5
@@ -196,6 +198,7 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         weekend_close_minute_utc=_env_int("AB_WEEKEND_CLOSE_MINUTE_UTC", DEFAULT_WEEKEND_CLOSE_MINUTE_UTC),
         loop_interval_seconds=_env_int("AB_LOOP_INTERVAL_SECONDS", 20),
         history_candles=_env_int("AB_HISTORY_CANDLES", 250),
+        signal_relative_volume_threshold=_env_float("AB_SIGNAL_RELATIVE_VOLUME_THRESHOLD", 0.0),
         regime_guard_enabled=_env_bool("AB_REGIME_GUARD_ENABLED", False),
         regime_guard_lookback_trades=_env_int("AB_REGIME_GUARD_LOOKBACK_TRADES", 6),
         regime_guard_min_closed_trades=_env_int("AB_REGIME_GUARD_MIN_CLOSED_TRADES", 5),

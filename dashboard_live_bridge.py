@@ -358,6 +358,8 @@ def build_live_pairs(
                 block_reason = "Bot disabled"
             elif pause_until and pause_until > now:
                 block_reason = f"Regime guard pause until {pause_until.isoformat()}"
+            elif symbol_state.get("last_block_reason"):
+                block_reason = str(symbol_state.get("last_block_reason"))
 
         pairs.append(
             {
@@ -367,24 +369,35 @@ def build_live_pairs(
                 "has_pending_order": pending_order,
                 "has_open_position": position_open,
                 "open_pnl": round2(open_pnl),
-                "breakout_detected": bool(position_open or pending_order or latest_today_trade),
+                "breakout_detected": bool(
+                    position_open
+                    or pending_order
+                    or latest_today_trade
+                    or symbol_state.get("last_breakout_detected_at")
+                ),
                 "breakout_side": (
                     safe_get(position, "position", "direction")
                     or (order.get("direction") if isinstance(order, dict) else None)
-                ) or symbol_state.get("pending_direction") or symbol_state.get("last_trade_direction"),
+                )
+                or symbol_state.get("pending_direction")
+                or symbol_state.get("last_breakout_side")
+                or symbol_state.get("last_trade_direction"),
                 "entry": (
                     safe_get(position, "position", "level")
                     or safe_get(order, "level")
                     or symbol_state.get("pending_entry")
+                    or symbol_state.get("last_entry_candidate")
                 ),
                 "stop_loss": (
                     safe_get(position, "position", "stopLevel")
                     or safe_get(order, "stopLevel")
+                    or symbol_state.get("last_stop_loss")
                 ),
                 "take_profit": (
                     safe_get(position, "position", "profitLevel")
                     or safe_get(position, "position", "limitLevel")
                     or safe_get(order, "profitLevel")
+                    or symbol_state.get("last_take_profit")
                 ),
                 "fill_price": safe_get(position, "position", "level"),
                 "block_reason": block_reason,

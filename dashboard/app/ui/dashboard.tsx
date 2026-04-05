@@ -7,6 +7,8 @@ import type { TradingHouseData } from "../lib/dashboard-data";
 const pairLogos: Record<string, string> = {
   GBPJPY: "/gbp-jpy.svg",
   EURJPY: "/eur-jpy.svg",
+  USDJPY: "/usd-jpy.svg",
+  AUDJPY: "/aud-jpy.svg",
 };
 
 type CharacterMood = "idle" | "waiting" | "happy" | "angry";
@@ -125,10 +127,10 @@ const zombieRoomConfig: RoomSceneConfig = {
   promptName: "Rotface Chief",
   navigateLabel: "Back to Skeleton Room",
   helperLabel: "Tap on trader for daily report",
-  traders: ["EURJPY", "GBPJPY"],
+  traders: ["USDJPY", "AUDJPY"],
   characters: {
-    EURJPY: {
-      name: "Zombert",
+    USDJPY: {
+      name: "Dollar Rot",
       idle: "/Characters/Zombie/Zombie_Villager_1/PNG/PNG Sequences/Idle/0_Zombie_Villager_Idle_000.png",
       waiting:
         "/Characters/Zombie/Zombie_Villager_1/PNG/PNG Sequences/Idle Blinking/0_Zombie_Villager_Idle Blinking_009.png",
@@ -138,8 +140,8 @@ const zombieRoomConfig: RoomSceneConfig = {
       hurt: "/Characters/Zombie/Zombie_Villager_1/PNG/PNG Sequences/Hurt/0_Zombie_Villager_Hurt_011.png",
       dying: "/Characters/Zombie/Zombie_Villager_1/PNG/PNG Sequences/Dying/0_Zombie_Villager_Dying_014.png",
     },
-    GBPJPY: {
-      name: "Ghoulia",
+    AUDJPY: {
+      name: "Aussie Bite",
       idle: "/Characters/Zombie/Zombie_Villager_2/PNG/PNG Sequences/Idle/0_Zombie_Villager_Idle_000.png",
       waiting:
         "/Characters/Zombie/Zombie_Villager_2/PNG/PNG Sequences/Idle Blinking/0_Zombie_Villager_Idle Blinking_009.png",
@@ -161,7 +163,7 @@ const zombieRoomConfig: RoomSceneConfig = {
       dying: "/Characters/Zombie/Zombie_Villager_3/PNG/PNG Sequences/Dying/0_Zombie_Villager_Dying_014.png",
     },
   },
-  fightTeam: ["EURJPY", "GBPJPY", "CHIEF"],
+  fightTeam: ["USDJPY", "AUDJPY", "CHIEF"],
 };
 
 const roomConfigs: Record<RoomKey, RoomSceneConfig> = {
@@ -808,11 +810,11 @@ export function Dashboard({ data }: { data: TradingHouseData }) {
               <div className={`speech-pop mood-${trader.mood}`}>
                 <span>{moodSpeech(trader.mood)}</span>
               </div>
-              <img
-                src={trader.character[trader.mood]}
-                alt={`${trader.symbol} trader`}
-                className={`character-sprite ${trader.symbol === "EURJPY" ? "eur" : "gbp"} mood-${trader.mood}`}
-              />
+                <img
+                  src={trader.character[trader.mood]}
+                  alt={`${trader.symbol} trader`}
+                  className={`character-sprite ${index === 0 ? "eur" : "gbp"} mood-${trader.mood}`}
+                />
             </button>
           ))}
 
