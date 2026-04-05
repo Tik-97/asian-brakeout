@@ -49,6 +49,21 @@ def round2(value: float | None) -> float:
     return round(float(value or 0.0), 2)
 
 
+def round_price(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), 5)
+
+
+def to_float(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def dashboard_initial_deposit_override() -> float | None:
     raw_value = os.getenv("AB_DASHBOARD_INITIAL_DEPOSIT_USD")
     if raw_value is None or not str(raw_value).strip():
@@ -315,6 +330,7 @@ def build_trade_history_payload(
 
 def build_live_pairs(
     config: AppConfig,
+    api: CapitalAPI,
     *,
     account_info: dict[str, Any],
     positions: list[dict[str, Any]],
@@ -339,6 +355,16 @@ def build_live_pairs(
         symbol_state = current_state.get(symbol, {})
         position = positions_by_symbol.get(symbol)
         order = orders_by_symbol.get(symbol)
+        market_details = {}
+        epic = config.strategy.symbols.get(symbol, symbol)
+        try:
+            market_details = api.get_market_details(epic)
+        except Exception:  # noqa: BLE001
+            market_details = {}
+        snapshot = market_details.get("snapshot", {}) if isinstance(market_details, dict) else {}
+        bid = to_float(snapshot.get("bid"))
+        ask = to_float(snapshot.get("offer"))
+        mid_price = ((bid + ask) / 2.0) if bid is not None and ask is not None else ask if ask is not None else bid
         daily_trades = symbol_state.get("daily_trades", []) if isinstance(symbol_state.get("daily_trades"), list) else []
         latest_today_trade = daily_trades[-1] if daily_trades else None
         pause_until = parse_timestamp(symbol_state.get("regime_pause_until_utc"))
@@ -364,6 +390,9 @@ def build_live_pairs(
         pairs.append(
             {
                 "symbol": symbol,
+                "bid": round_price(bid),
+                "ask": round_price(ask),
+                "mid_price": round_price(mid_price),
                 "asian_high": symbol_state.get("asian_high"),
                 "asian_low": symbol_state.get("asian_low"),
                 "has_pending_order": pending_order,
@@ -460,6 +489,7 @@ def build_live_dashboard(
         },
         "pairs": build_live_pairs(
             config,
+            api,
             account_info=account_info,
             positions=positions,
             working_orders=working_orders,

@@ -351,14 +351,6 @@ function weekendDayName(currentUtc: Date) {
 
 function buildTraderUpdate(data: TradingHouseData, symbol: string, currentUtc: Date) {
   const weekendName = weekendDayName(currentUtc);
-  if (weekendName) {
-    return [
-      `Boss, today is ${weekendName}.`,
-      "Market is resting.",
-      "No breakout updates for now.",
-    ];
-  }
-
   const livePair = data.liveStatus?.pairs?.find((pair) => pair.symbol === symbol);
   const room = data.rooms.find((item) => item.symbol === symbol);
   const todayUtc = data.liveStatus?.updated_at_utc?.slice(0, 10) ?? "";
@@ -378,6 +370,16 @@ function buildTraderUpdate(data: TradingHouseData, symbol: string, currentUtc: D
 
   const lines: string[] = [];
   lines.push("Boss, today stats are following...");
+  lines.push(`Bid: ${formatLevel(livePair?.bid)}`);
+  lines.push(`Ask: ${formatLevel(livePair?.ask)}`);
+  lines.push(`Mid: ${formatLevel(livePair?.mid_price)}`);
+
+  if (weekendName) {
+    lines.push(`Boss, today is ${weekendName}.`);
+    lines.push("Market is resting.");
+    lines.push("No breakout updates for now.");
+    return lines;
+  }
 
   if (livePair?.asian_high !== undefined || livePair?.asian_low !== undefined) {
     lines.push(`Asian High: ${formatLevel(livePair?.asian_high)}`);

@@ -63,6 +63,9 @@ export type LivePairStatus = {
   has_pending_order?: boolean;
   has_open_position?: boolean;
   open_pnl?: number;
+  bid?: number | string;
+  ask?: number | string;
+  mid_price?: number | string;
   asian_high?: number | string;
   asian_low?: number | string;
   breakout_detected?: boolean;
