@@ -157,6 +157,159 @@ class AsianBreakoutBot:
         init_symbols(self.config.strategy.symbols.keys())
         load_state()
 
+    def inspect_recent_closed_signal(self, now_utc: dt.datetime, source: str = "restart_catchup") -> None:
+        account_info = self.api.get_account_info()
+        account_prefs = self.api.get_account_preferences()
+        account_ccy = self.get_account_currency()
+        metrics = account_metrics(account_info)
+        balance = metrics.get("balance")
+        if balance is None or balance <= 0:
+            return
+        dynamic_target_margin = float(balance * self.config.strategy.portfolio_margin_fraction)
+        if dynamic_target_margin <= 0:
+            return
+
+        current_trade_day = current_session_date(now_utc, self.config.strategy.session_start_hour_utc)
+        entry_end_dt = dt.datetime.combine(
+            current_trade_day,
+            dt.time(self.config.strategy.entry_end_hour_utc, 59, tzinfo=dt.timezone.utc),
+        )
+        if now_utc > entry_end_dt:
+            return
+
+        for symbol, epic in self.config.strategy.symbols.items():
+            try:
+                symbol_state = state.get(symbol, {})
+                if symbol_state.get("trade_taken_today"):
+                    continue
+                if symbol_state.get("working_order_id") or symbol_state.get("open_deal_id"):
+                    continue
+                pause_until = parse_utc_timestamp(symbol_state.get("regime_pause_until_utc"))
+                if pause_until is not None and now_utc < pause_until:
+                    continue
+                asian_high = symbol_state.get("asian_high")
+                asian_low = symbol_state.get("asian_low")
+                if asian_high is None or asian_low is None:
+                    continue
+
+                df = parse_candles(self.api.get_candles(epic, resolution="HOUR", max_candles=self.config.strategy.history_candles))
+                if df.empty or len(df) < self.config.strategy.atr_period + 5:
+                    continue
+                signal, candle_time = check_breakout(df, asian_high, asian_low)
+                if not signal:
+                    continue
+                if candle_time.date() != current_trade_day:
+                    continue
+                candle_dt = candle_time.to_pydatetime().astimezone(dt.timezone.utc)
+                if candle_dt.hour < self.config.strategy.entry_start_hour_utc or candle_dt.hour > self.config.strategy.entry_end_hour_utc:
+                    continue
+
+                candle_key = candle_time.isoformat() if hasattr(candle_time, "isoformat") else str(candle_time)
+                if symbol_state.get("last_processed_signal_candle") == candle_key:
+                    continue
+
+                entry = asian_high if signal == "BUY" else asian_low
+                atr_value = atr_filter(df, entry, self.strategy_params)
+                if atr_value is None:
+                    update_symbol(
+                        symbol,
+                        last_processed_signal_candle=candle_key,
+                        last_breakout_detected_at=candle_key,
+                        last_breakout_side=signal,
+                        last_entry_candidate=entry,
+                        last_stop_loss=None,
+                        last_take_profit=None,
+                        last_relative_volume=None,
+                        last_block_reason="ATR filter blocked entry",
+                    )
+                    continue
+
+                stop_loss, take_profit = calculate_levels(entry, atr_value, signal, self.strategy_params)
+                relative_volume_value = None
+                if self.config.strategy.signal_relative_volume_threshold > 0:
+                    relative_volume_frame = build_relative_signal_volume_frame(df)
+                    relative_volume_subset = relative_volume_frame[relative_volume_frame["time"] == candle_time]
+                    if not relative_volume_subset.empty:
+                        raw_relative_volume = relative_volume_subset.iloc[-1]["rel_volume"]
+                        if raw_relative_volume is not None:
+                            relative_volume_value = float(raw_relative_volume)
+                    if not passes_relative_signal_volume_filter(
+                        signal_time=candle_time,
+                        min_relative_volume=self.config.strategy.signal_relative_volume_threshold,
+                        relative_volume_frame=relative_volume_frame,
+                    ):
+                        threshold = self.config.strategy.signal_relative_volume_threshold
+                        reason = (
+                            f"Relative volume {relative_volume_value:.2f} below {threshold:.2f}"
+                            if relative_volume_value is not None
+                            else f"Relative volume unavailable below {threshold:.2f}"
+                        )
+                        update_symbol(
+                            symbol,
+                            last_processed_signal_candle=candle_key,
+                            last_breakout_detected_at=candle_key,
+                            last_breakout_side=signal,
+                            last_entry_candidate=entry,
+                            last_stop_loss=stop_loss,
+                            last_take_profit=take_profit,
+                            last_relative_volume=relative_volume_value,
+                            last_block_reason=reason,
+                        )
+                        continue
+
+                market_info = self.api.get_market_details(epic)
+                margin_currency = market_info.get("instrument", {}).get("currency")
+                margin_to_account_rate = self.get_margin_to_account_rate(margin_currency, account_ccy)
+                size_info = choose_size_for_target_margin_live(
+                    entry_price=entry,
+                    market_info=market_info,
+                    account_preferences=account_prefs,
+                    target_margin=dynamic_target_margin,
+                    leverage_overrides=self.config.strategy.target_leverage_by_type,
+                    margin_to_account_rate=margin_to_account_rate,
+                )
+                if not size_info.get("ok"):
+                    update_symbol(
+                        symbol,
+                        last_processed_signal_candle=candle_key,
+                        last_breakout_detected_at=candle_key,
+                        last_breakout_side=signal,
+                        last_entry_candidate=entry,
+                        last_stop_loss=stop_loss,
+                        last_take_profit=take_profit,
+                        last_relative_volume=relative_volume_value,
+                        last_block_reason=f"Size calc failed: {size_info.get('reason')}",
+                    )
+                    continue
+
+                update_symbol(
+                    symbol,
+                    last_processed_signal_candle=candle_key,
+                    last_breakout_detected_at=candle_key,
+                    last_breakout_side=signal,
+                    last_entry_candidate=entry,
+                    last_stop_loss=stop_loss,
+                    last_take_profit=take_profit,
+                    last_relative_volume=relative_volume_value,
+                    last_block_reason="Restart catch-up saw valid breakout; no retroactive order placed",
+                )
+                self.send_dedup(
+                    f"catchup:{symbol}:{candle_key}:{source}",
+                    (
+                        f"<b>{symbol} RESTART CATCH-UP</b>\n"
+                        f"Direction: <b>{signal}</b>\n"
+                        f"Entry: <code>{entry:.5f}</code>\n"
+                        f"Reason: <code>No retroactive order after restart</code>"
+                    ),
+                    ttl_seconds=12 * 3600,
+                )
+            except Exception as error:  # noqa: BLE001
+                self.send_dedup(
+                    f"catchup_error:{symbol}:{type(error).__name__}:{str(error)}",
+                    f"<b>{symbol}</b>\nRestart catch-up error:\n<code>{str(error)}</code>",
+                    ttl_seconds=1800,
+                )
+
     @property
     def strategy_params(self) -> StrategyParameters:
         return StrategyParameters(
@@ -699,6 +852,7 @@ class AsianBreakoutBot:
         self.ensure_session_state(startup_now)
         self.sync_live_broker_state(startup_now)
         self.refresh_regime_guards(startup_now)
+        self.inspect_recent_closed_signal(startup_now)
         self.send("<b>BOT STARTED</b>\nAsian Breakout backend bot active.")
 
         while True:
