@@ -62,6 +62,8 @@ class StrategyConfig:
     asian_session_end_hour_utc: int = 8
     entry_start_hour_utc: int = 10
     entry_end_hour_utc: int = 23
+    entry_check_start_minute_utc: int = 1
+    entry_check_end_minute_utc: int = 5
     position_force_close_hour_utc: int = 8
     position_force_close_minute_utc: int = 59
     weekend_close_hour_utc: int = DEFAULT_WEEKEND_CLOSE_HOUR_UTC
@@ -204,6 +206,8 @@ def load_config(env_path: str | Path = ".env") -> AppConfig:
         asian_session_end_hour_utc=_env_int("AB_ASIAN_SESSION_END_HOUR_UTC", 8),
         entry_start_hour_utc=_env_int("AB_ENTRY_START_HOUR_UTC", 10),
         entry_end_hour_utc=_env_int("AB_ENTRY_END_HOUR_UTC", 23),
+        entry_check_start_minute_utc=_env_int("AB_ENTRY_CHECK_START_MINUTE_UTC", 1),
+        entry_check_end_minute_utc=_env_int("AB_ENTRY_CHECK_END_MINUTE_UTC", 5),
         position_force_close_hour_utc=_env_int("AB_FORCE_CLOSE_HOUR_UTC", 8),
         position_force_close_minute_utc=_env_int("AB_FORCE_CLOSE_MINUTE_UTC", 59),
         weekend_close_hour_utc=_env_int("AB_WEEKEND_CLOSE_HOUR_UTC", DEFAULT_WEEKEND_CLOSE_HOUR_UTC),

@@ -153,7 +153,7 @@ class AsianBreakoutBot:
         self.notification_cooldowns: dict[str, float] = {}
         self.last_trade_sync_at = 0.0
         self.last_archive_sync_at = 0.0
-        self.last_entry_hour_key: tuple[dt.date, int] | None = None
+        self.last_entry_check_key: tuple[dt.date, int, int] | None = None
         init_symbols(self.config.strategy.symbols.keys())
         load_state()
 
@@ -712,10 +712,15 @@ class AsianBreakoutBot:
                     is_bot_enabled()
                     and self.config.strategy.entry_start_hour_utc <= now.hour <= self.config.strategy.entry_end_hour_utc
                 ):
-                    hour_key = (now.date(), now.hour)
-                    if self.last_entry_hour_key != hour_key:
+                    minute_in_window = (
+                        self.config.strategy.entry_check_start_minute_utc
+                        <= now.minute
+                        <= self.config.strategy.entry_check_end_minute_utc
+                    )
+                    check_key = (now.date(), now.hour, now.minute)
+                    if minute_in_window and self.last_entry_check_key != check_key:
                         self.check_entries(source="live")
-                        self.last_entry_hour_key = hour_key
+                        self.last_entry_check_key = check_key
                 self.sync_filled_positions()
             except Exception as error:  # noqa: BLE001
                 self.send(f"<b>MAIN LOOP ERROR</b>\n<code>{str(error)}</code>")
