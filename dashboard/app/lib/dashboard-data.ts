@@ -4,7 +4,12 @@ import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const dataDir = path.resolve(__dirname, "../../public/data");
+const dataDir = path.resolve(
+  process.env.AB_DASHBOARD_DATA_DIR ?? path.resolve(__dirname, "../../public/data"),
+);
+const liveDashboardFilePath = process.env.AB_LIVE_DASHBOARD_FILE
+  ? path.resolve(process.env.AB_LIVE_DASHBOARD_FILE)
+  : path.join(dataDir, "live_dashboard.json");
 
 export type Summary = {
   AccountCurrency: string;
@@ -76,6 +81,9 @@ export type LivePairStatus = {
   fill_price?: number | string;
   block_reason?: string;
   position_status?: string;
+  latest_trade_result?: string | null;
+  latest_trade_pnl?: number | null;
+  latest_trade_closed_at?: string | null;
 };
 
 export type LiveStatus = {
@@ -179,6 +187,18 @@ async function readOptionalDataFile(fileName: string) {
   }
 }
 
+async function readOptionalAbsoluteFile(filePath: string) {
+  try {
+    return await fs.readFile(filePath, "utf-8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
 function normalizeLiveDashboardPayload(payload: LiveDashboardPayload | null): LiveDashboardPayload | null {
   if (!payload || typeof payload !== "object" || !payload.summary) {
     return null;
@@ -196,7 +216,7 @@ function normalizeLiveDashboardPayload(payload: LiveDashboardPayload | null): Li
 }
 
 async function readLiveDashboardSnapshot(): Promise<LiveDashboardPayload | null> {
-  const liveDashboardText = await readOptionalDataFile("live_dashboard.json");
+  const liveDashboardText = await readOptionalAbsoluteFile(liveDashboardFilePath);
   if (!liveDashboardText) {
     return null;
   }

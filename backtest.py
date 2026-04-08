@@ -142,6 +142,25 @@ def build_relative_signal_volume_frame(history: pd.DataFrame, lookback: int = 20
     return frame[["time", "rel_volume"]].copy()
 
 
+def build_signal_rsi_frame(history: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+    if history.empty or period <= 0:
+        return pd.DataFrame()
+    frame = history[["time", "close"]].copy()
+    frame = frame.dropna(subset=["time", "close"]).sort_values("time")
+    if frame.empty:
+        return pd.DataFrame()
+    delta = frame["close"].diff()
+    gains = delta.clip(lower=0.0)
+    losses = -delta.clip(upper=0.0)
+    avg_gain = gains.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_loss = losses.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    rs = avg_gain / avg_loss.replace(0.0, pd.NA)
+    frame["rsi"] = 100.0 - (100.0 / (1.0 + rs))
+    frame.loc[avg_loss == 0.0, "rsi"] = 100.0
+    frame.loc[(avg_gain == 0.0) & (avg_loss == 0.0), "rsi"] = 50.0
+    return frame[["time", "rsi"]].copy()
+
+
 def passes_intraday_vwap_filter(
     *,
     direction: str,
@@ -179,6 +198,31 @@ def passes_relative_signal_volume_filter(
     return float(rel_volume) >= min_relative_volume
 
 
+def passes_signal_rsi_filter(
+    *,
+    direction: str,
+    signal_time: dt.datetime,
+    rsi_frame: pd.DataFrame,
+    buy_max_rsi: float | None = None,
+    sell_min_rsi: float | None = None,
+) -> bool:
+    if buy_max_rsi is None and sell_min_rsi is None:
+        return True
+    if rsi_frame.empty:
+        return False
+    subset = rsi_frame[rsi_frame["time"] == pd.Timestamp(signal_time)]
+    if subset.empty:
+        return False
+    rsi_value = subset.iloc[-1]["rsi"]
+    if pd.isna(rsi_value):
+        return False
+    if direction == "BUY" and buy_max_rsi is not None:
+        return float(rsi_value) <= float(buy_max_rsi)
+    if direction == "SELL" and sell_min_rsi is not None:
+        return float(rsi_value) >= float(sell_min_rsi)
+    return True
+
+
 def passes_gbpjpy_h4_ema50_filter(
     *,
     symbol: str,
@@ -198,6 +242,26 @@ def passes_gbpjpy_h4_ema50_filter(
     ema50_value = float(row["ema50"])
     if direction == "BUY":
         return close_value > ema50_value
+    return close_value < ema50_value
+
+
+def passes_usdjpy_sell_h4_ema50_filter(
+    *,
+    symbol: str,
+    direction: str,
+    signal_time: dt.datetime,
+    h4_trend: pd.DataFrame,
+) -> bool:
+    if symbol.upper() != "USDJPY" or direction != "SELL":
+        return True
+    if h4_trend.empty:
+        return False
+    subset = h4_trend[h4_trend["time"] <= pd.Timestamp(signal_time)]
+    if subset.empty:
+        return False
+    row = subset.iloc[-1]
+    close_value = float(row["close"])
+    ema50_value = float(row["ema50"])
     return close_value < ema50_value
 
 
@@ -519,6 +583,9 @@ def summarize_trade_frame(
 def render_summary(symbol: str, summary: dict[str, float]) -> str:
     signal_relative_volume_threshold = summary.get("SignalRelativeVolumeThreshold")
     breakout_close_buffer_atr_fraction = summary.get("BreakoutCloseBufferAtrFraction")
+    signal_rsi_period = summary.get("SignalRSIPeriod")
+    signal_rsi_buy_max = summary.get("SignalRSIBuyMax")
+    signal_rsi_sell_min = summary.get("SignalRSISellMin")
     partial_take_profit_fraction = summary.get("PartialTakeProfitFraction")
     partial_take_profit_r_multiple = summary.get("PartialTakeProfitRMultiple")
     return "\n".join(
@@ -569,6 +636,14 @@ def render_summary(symbol: str, summary: dict[str, float]) -> str:
                 f"BreakoutCloseBufferAtrFraction: {float(breakout_close_buffer_atr_fraction):.3f}"
                 if breakout_close_buffer_atr_fraction not in (None, 0, 0.0)
                 else "BreakoutCloseBufferAtrFraction: off"
+            ),
+            (
+                "SignalRSIFilter: "
+                f"period {float(signal_rsi_period):.0f}, buy <= {float(signal_rsi_buy_max):.1f}, sell >= {float(signal_rsi_sell_min):.1f}"
+                if signal_rsi_period not in (None, 0, 0.0)
+                and signal_rsi_buy_max is not None
+                and signal_rsi_sell_min is not None
+                else "SignalRSIFilter: off"
             ),
             f"VWAPDirectionFilter: {'on' if summary.get('VWAPDirectionFilter') else 'off'}",
             (
@@ -748,18 +823,24 @@ def run_symbol_backtest_in_range(
     entry_signal_cutoff_hour_utc: int | None = None,
     entry_signal_cutoff_weekdays_utc: set[int] | None = None,
     gbpjpy_h4_ema50_trend_filter: bool = False,
+    usdjpy_sell_h4_ema50_trend_filter: bool = False,
     gbpjpy_breakout_buffer_atr_fraction: float = 0.0,
     gbpjpy_entry_signal_cutoff_hour_utc: int | None = None,
     max_signal_age_hours: float | None = None,
     vwap_direction_filter: bool = False,
     signal_relative_volume_threshold: float = 0.0,
+    signal_rsi_period: int = 0,
+    signal_rsi_buy_max: float | None = None,
+    signal_rsi_sell_min: float | None = None,
     breakout_close_buffer_atr_fraction: float = 0.0,
     partial_take_profit_fraction: float = 0.0,
     partial_take_profit_r_multiple: float = 1.0,
     gbpjpy_disable_sell: bool = False,
+    disable_sell_symbols: set[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
     symbol = symbol.upper()
     epic = config.strategy.symbols.get(symbol, symbol)
+    disable_sell_symbols = {item.upper() for item in (disable_sell_symbols or set())}
     requested_start = (
         dt.datetime.combine(start_date, dt.time(0, 0, tzinfo=dt.timezone.utc))
         if start_date is not None
@@ -779,9 +860,10 @@ def run_symbol_backtest_in_range(
     )
     if history.empty or len(history) < 100:
         return pd.DataFrame(), summarize_trade_frame(pd.DataFrame(), start_time=dt.datetime.now(dt.timezone.utc), end_time=dt.datetime.now(dt.timezone.utc))
-    h4_trend = build_h4_ema50_trend_frame(history) if gbpjpy_h4_ema50_trend_filter else pd.DataFrame()
+    h4_trend = build_h4_ema50_trend_frame(history) if (gbpjpy_h4_ema50_trend_filter or usdjpy_sell_h4_ema50_trend_filter) else pd.DataFrame()
     intraday_vwap = build_intraday_vwap_frame(history) if vwap_direction_filter else pd.DataFrame()
     relative_signal_volume = build_relative_signal_volume_frame(history) if signal_relative_volume_threshold > 0 else pd.DataFrame()
+    signal_rsi = build_signal_rsi_frame(history, period=signal_rsi_period) if signal_rsi_period > 0 else pd.DataFrame()
 
     params = StrategyParameters(
         atr_period=config.strategy.atr_period,
@@ -898,7 +980,10 @@ def run_symbol_backtest_in_range(
 
         if signal_row is None or direction is None or signal_entry is None:
             continue
-        if gbpjpy_disable_sell and symbol.upper() == "GBPJPY" and direction == "SELL":
+        if direction == "SELL" and (
+            (gbpjpy_disable_sell and symbol == "GBPJPY")
+            or symbol in disable_sell_symbols
+        ):
             continue
 
         signal_time = signal_row["time"].to_pydatetime().astimezone(dt.timezone.utc)
@@ -916,7 +1001,22 @@ def run_symbol_backtest_in_range(
             relative_volume_frame=relative_signal_volume,
         ):
             continue
+        if signal_rsi_period > 0 and not passes_signal_rsi_filter(
+            direction=direction,
+            signal_time=signal_time,
+            rsi_frame=signal_rsi,
+            buy_max_rsi=signal_rsi_buy_max,
+            sell_min_rsi=signal_rsi_sell_min,
+        ):
+            continue
         if gbpjpy_h4_ema50_trend_filter and not passes_gbpjpy_h4_ema50_filter(
+            symbol=symbol,
+            direction=direction,
+            signal_time=signal_time,
+            h4_trend=h4_trend,
+        ):
+            continue
+        if usdjpy_sell_h4_ema50_trend_filter and not passes_usdjpy_sell_h4_ema50_filter(
             symbol=symbol,
             direction=direction,
             signal_time=signal_time,
@@ -1214,6 +1314,7 @@ def run_symbol_backtest_in_range(
     if entry_signal_cutoff_weekdays_utc is not None:
         summary["EntrySignalCutoffWeekdaysUTC"] = ",".join(str(day) for day in sorted(entry_signal_cutoff_weekdays_utc))
     summary["GBPJPYH4EMA50TrendFilter"] = bool(gbpjpy_h4_ema50_trend_filter)
+    summary["USDJPYSellH4EMA50TrendFilter"] = bool(usdjpy_sell_h4_ema50_trend_filter)
     summary["GBPJPYBreakoutBufferAtrFraction"] = float(gbpjpy_breakout_buffer_atr_fraction)
     if gbpjpy_entry_signal_cutoff_hour_utc is not None:
         summary["GBPJPYEntrySignalCutoffHourUTC"] = float(gbpjpy_entry_signal_cutoff_hour_utc)
@@ -1221,11 +1322,17 @@ def run_symbol_backtest_in_range(
         summary["MaxSignalAgeHours"] = float(max_signal_age_hours)
     summary["VWAPDirectionFilter"] = bool(vwap_direction_filter)
     summary["SignalRelativeVolumeThreshold"] = float(signal_relative_volume_threshold)
+    summary["SignalRSIPeriod"] = float(signal_rsi_period)
+    if signal_rsi_buy_max is not None:
+        summary["SignalRSIBuyMax"] = float(signal_rsi_buy_max)
+    if signal_rsi_sell_min is not None:
+        summary["SignalRSISellMin"] = float(signal_rsi_sell_min)
     summary["BreakoutCloseBufferAtrFraction"] = float(breakout_close_buffer_atr_fraction)
     if 0.0 < partial_take_profit_fraction < 1.0 and partial_take_profit_r_multiple > 0.0:
         summary["PartialTakeProfitFraction"] = float(partial_take_profit_fraction)
         summary["PartialTakeProfitRMultiple"] = float(partial_take_profit_r_multiple)
     summary["GBPJPYDisableSell"] = bool(gbpjpy_disable_sell)
+    summary["DisableSellSymbols"] = ",".join(sorted(disable_sell_symbols))
     if account_currency.upper() == "USD":
         summary["NetPnLUSD"] = summary["NetPnLAccount"]
         summary["FinalEquityUSD"] = summary["FinalEquityAccount"]
@@ -1248,15 +1355,20 @@ def run_backtests(
     entry_signal_cutoff_hour_utc: int | None = None,
     entry_signal_cutoff_weekdays_utc: set[int] | None = None,
     gbpjpy_h4_ema50_trend_filter: bool = False,
+    usdjpy_sell_h4_ema50_trend_filter: bool = False,
     gbpjpy_breakout_buffer_atr_fraction: float = 0.0,
     gbpjpy_entry_signal_cutoff_hour_utc: int | None = None,
     max_signal_age_hours: float | None = None,
     vwap_direction_filter: bool = False,
     signal_relative_volume_threshold: float = 0.0,
+    signal_rsi_period: int = 0,
+    signal_rsi_buy_max: float | None = None,
+    signal_rsi_sell_min: float | None = None,
     breakout_close_buffer_atr_fraction: float = 0.0,
     partial_take_profit_fraction: float = 0.0,
     partial_take_profit_r_multiple: float = 1.0,
     gbpjpy_disable_sell: bool = False,
+    disable_sell_symbols: set[str] | None = None,
 ) -> dict[str, dict[str, float]]:
     selected_symbols = [symbol.upper() for symbol in (symbols or list(config.strategy.symbols.keys()))]
     config.backtest.output_dir.mkdir(parents=True, exist_ok=True)
@@ -1279,15 +1391,20 @@ def run_backtests(
             entry_signal_cutoff_hour_utc=entry_signal_cutoff_hour_utc,
             entry_signal_cutoff_weekdays_utc=entry_signal_cutoff_weekdays_utc,
             gbpjpy_h4_ema50_trend_filter=gbpjpy_h4_ema50_trend_filter,
+            usdjpy_sell_h4_ema50_trend_filter=usdjpy_sell_h4_ema50_trend_filter,
             gbpjpy_breakout_buffer_atr_fraction=gbpjpy_breakout_buffer_atr_fraction,
             gbpjpy_entry_signal_cutoff_hour_utc=gbpjpy_entry_signal_cutoff_hour_utc,
             max_signal_age_hours=max_signal_age_hours,
             vwap_direction_filter=vwap_direction_filter,
             signal_relative_volume_threshold=signal_relative_volume_threshold,
+            signal_rsi_period=signal_rsi_period,
+            signal_rsi_buy_max=signal_rsi_buy_max,
+            signal_rsi_sell_min=signal_rsi_sell_min,
             breakout_close_buffer_atr_fraction=breakout_close_buffer_atr_fraction,
             partial_take_profit_fraction=partial_take_profit_fraction,
             partial_take_profit_r_multiple=partial_take_profit_r_multiple,
             gbpjpy_disable_sell=gbpjpy_disable_sell,
+            disable_sell_symbols=disable_sell_symbols,
         )
         summaries[symbol] = summary
         trades_path = config.backtest.output_dir / f"{symbol.lower()}_trades.csv"
@@ -1321,15 +1438,20 @@ def run_portfolio_backtest(
     entry_signal_cutoff_hour_utc: int | None = None,
     entry_signal_cutoff_weekdays_utc: set[int] | None = None,
     gbpjpy_h4_ema50_trend_filter: bool = False,
+    usdjpy_sell_h4_ema50_trend_filter: bool = False,
     gbpjpy_breakout_buffer_atr_fraction: float = 0.0,
     gbpjpy_entry_signal_cutoff_hour_utc: int | None = None,
     max_signal_age_hours: float | None = None,
     vwap_direction_filter: bool = False,
     signal_relative_volume_threshold: float = 0.0,
+    signal_rsi_period: int = 0,
+    signal_rsi_buy_max: float | None = None,
+    signal_rsi_sell_min: float | None = None,
     breakout_close_buffer_atr_fraction: float = 0.0,
     partial_take_profit_fraction: float = 0.0,
     partial_take_profit_r_multiple: float = 1.0,
     gbpjpy_disable_sell: bool = False,
+    disable_sell_symbols: set[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
     selected_symbols = [symbol.upper() for symbol in (symbols or list(config.strategy.symbols.keys()))]
     candidate_frames: list[pd.DataFrame] = []
@@ -1358,15 +1480,20 @@ def run_portfolio_backtest(
             entry_signal_cutoff_hour_utc=entry_signal_cutoff_hour_utc,
             entry_signal_cutoff_weekdays_utc=entry_signal_cutoff_weekdays_utc,
             gbpjpy_h4_ema50_trend_filter=gbpjpy_h4_ema50_trend_filter,
+            usdjpy_sell_h4_ema50_trend_filter=usdjpy_sell_h4_ema50_trend_filter,
             gbpjpy_breakout_buffer_atr_fraction=gbpjpy_breakout_buffer_atr_fraction,
             gbpjpy_entry_signal_cutoff_hour_utc=gbpjpy_entry_signal_cutoff_hour_utc,
             max_signal_age_hours=max_signal_age_hours,
             vwap_direction_filter=vwap_direction_filter,
             signal_relative_volume_threshold=signal_relative_volume_threshold,
+            signal_rsi_period=signal_rsi_period,
+            signal_rsi_buy_max=signal_rsi_buy_max,
+            signal_rsi_sell_min=signal_rsi_sell_min,
             breakout_close_buffer_atr_fraction=breakout_close_buffer_atr_fraction,
             partial_take_profit_fraction=partial_take_profit_fraction,
             partial_take_profit_r_multiple=partial_take_profit_r_multiple,
             gbpjpy_disable_sell=gbpjpy_disable_sell,
+            disable_sell_symbols=disable_sell_symbols,
         )
         if trades_df.empty:
             continue
@@ -1406,6 +1533,7 @@ def run_portfolio_backtest(
         if entry_signal_cutoff_weekdays_utc is not None:
             empty_summary["EntrySignalCutoffWeekdaysUTC"] = ",".join(str(day) for day in sorted(entry_signal_cutoff_weekdays_utc))
         empty_summary["GBPJPYH4EMA50TrendFilter"] = bool(gbpjpy_h4_ema50_trend_filter)
+        empty_summary["USDJPYSellH4EMA50TrendFilter"] = bool(usdjpy_sell_h4_ema50_trend_filter)
         empty_summary["GBPJPYBreakoutBufferAtrFraction"] = float(gbpjpy_breakout_buffer_atr_fraction)
         if gbpjpy_entry_signal_cutoff_hour_utc is not None:
             empty_summary["GBPJPYEntrySignalCutoffHourUTC"] = float(gbpjpy_entry_signal_cutoff_hour_utc)
@@ -1413,11 +1541,17 @@ def run_portfolio_backtest(
             empty_summary["MaxSignalAgeHours"] = float(max_signal_age_hours)
         empty_summary["VWAPDirectionFilter"] = bool(vwap_direction_filter)
         empty_summary["SignalRelativeVolumeThreshold"] = float(signal_relative_volume_threshold)
+        empty_summary["SignalRSIPeriod"] = float(signal_rsi_period)
+        if signal_rsi_buy_max is not None:
+            empty_summary["SignalRSIBuyMax"] = float(signal_rsi_buy_max)
+        if signal_rsi_sell_min is not None:
+            empty_summary["SignalRSISellMin"] = float(signal_rsi_sell_min)
         empty_summary["BreakoutCloseBufferAtrFraction"] = float(breakout_close_buffer_atr_fraction)
         if 0.0 < partial_take_profit_fraction < 1.0 and partial_take_profit_r_multiple > 0.0:
             empty_summary["PartialTakeProfitFraction"] = float(partial_take_profit_fraction)
             empty_summary["PartialTakeProfitRMultiple"] = float(partial_take_profit_r_multiple)
         empty_summary["GBPJPYDisableSell"] = bool(gbpjpy_disable_sell)
+        empty_summary["DisableSellSymbols"] = ",".join(sorted({item.upper() for item in (disable_sell_symbols or set())}))
         if account_currency.upper() == "USD":
             empty_summary["NetPnLUSD"] = empty_summary["NetPnLAccount"]
             empty_summary["FinalEquityUSD"] = empty_summary["FinalEquityAccount"]
@@ -1580,9 +1714,19 @@ def run_portfolio_backtest(
         if entry_signal_cutoff_weekdays_utc is not None:
             summary["EntrySignalCutoffWeekdaysUTC"] = ",".join(str(day) for day in sorted(entry_signal_cutoff_weekdays_utc))
         summary["GBPJPYH4EMA50TrendFilter"] = bool(gbpjpy_h4_ema50_trend_filter)
+        summary["USDJPYSellH4EMA50TrendFilter"] = bool(usdjpy_sell_h4_ema50_trend_filter)
         summary["GBPJPYBreakoutBufferAtrFraction"] = float(gbpjpy_breakout_buffer_atr_fraction)
         if gbpjpy_entry_signal_cutoff_hour_utc is not None:
             summary["GBPJPYEntrySignalCutoffHourUTC"] = float(gbpjpy_entry_signal_cutoff_hour_utc)
+        if max_signal_age_hours is not None:
+            summary["MaxSignalAgeHours"] = float(max_signal_age_hours)
+        summary["VWAPDirectionFilter"] = bool(vwap_direction_filter)
+        summary["SignalRelativeVolumeThreshold"] = float(signal_relative_volume_threshold)
+        summary["SignalRSIPeriod"] = float(signal_rsi_period)
+        if signal_rsi_buy_max is not None:
+            summary["SignalRSIBuyMax"] = float(signal_rsi_buy_max)
+        if signal_rsi_sell_min is not None:
+            summary["SignalRSISellMin"] = float(signal_rsi_sell_min)
         summary["BreakoutCloseBufferAtrFraction"] = float(breakout_close_buffer_atr_fraction)
         if account_currency.upper() == "USD":
             summary["NetPnLUSD"] = summary["NetPnLAccount"]
@@ -1604,8 +1748,8 @@ def run_portfolio_backtest(
         "AcceptedTrades": float(len(accepted_df)),
         "SkippedTrades": float(len(portfolio_df) - len(accepted_df)),
         "WinRate": float((accepted_df["portfolio_pnl_account"] > 0).mean() * 100.0),
-        "NetPnLAccount": float(accepted_df["portfolio_pnl_account"].sum()),
-        "FinalEquityAccount": float(initial_equity + accepted_df["portfolio_pnl_account"].sum()),
+        "NetPnLAccount": float(cash_equity - initial_equity),
+        "FinalEquityAccount": float(cash_equity),
         "ReturnPct": float((accepted_df["portfolio_pnl_account"].sum() / initial_equity) * 100.0) if initial_equity > 0 else 0.0,
         "AvgPnLAccount": float(accepted_df["portfolio_pnl_account"].mean()),
         "ProfitFactorAccount": float(gross_profit / gross_loss) if gross_loss else 0.0,
@@ -1632,6 +1776,7 @@ def run_portfolio_backtest(
     if entry_signal_cutoff_weekdays_utc is not None:
         summary["EntrySignalCutoffWeekdaysUTC"] = ",".join(str(day) for day in sorted(entry_signal_cutoff_weekdays_utc))
     summary["GBPJPYH4EMA50TrendFilter"] = bool(gbpjpy_h4_ema50_trend_filter)
+    summary["USDJPYSellH4EMA50TrendFilter"] = bool(usdjpy_sell_h4_ema50_trend_filter)
     summary["GBPJPYBreakoutBufferAtrFraction"] = float(gbpjpy_breakout_buffer_atr_fraction)
     if gbpjpy_entry_signal_cutoff_hour_utc is not None:
         summary["GBPJPYEntrySignalCutoffHourUTC"] = float(gbpjpy_entry_signal_cutoff_hour_utc)
@@ -1639,11 +1784,17 @@ def run_portfolio_backtest(
         summary["MaxSignalAgeHours"] = float(max_signal_age_hours)
     summary["VWAPDirectionFilter"] = bool(vwap_direction_filter)
     summary["SignalRelativeVolumeThreshold"] = float(signal_relative_volume_threshold)
+    summary["SignalRSIPeriod"] = float(signal_rsi_period)
+    if signal_rsi_buy_max is not None:
+        summary["SignalRSIBuyMax"] = float(signal_rsi_buy_max)
+    if signal_rsi_sell_min is not None:
+        summary["SignalRSISellMin"] = float(signal_rsi_sell_min)
     summary["BreakoutCloseBufferAtrFraction"] = float(breakout_close_buffer_atr_fraction)
     if 0.0 < partial_take_profit_fraction < 1.0 and partial_take_profit_r_multiple > 0.0:
         summary["PartialTakeProfitFraction"] = float(partial_take_profit_fraction)
         summary["PartialTakeProfitRMultiple"] = float(partial_take_profit_r_multiple)
     summary["GBPJPYDisableSell"] = bool(gbpjpy_disable_sell)
+    summary["DisableSellSymbols"] = ",".join(sorted({item.upper() for item in (disable_sell_symbols or set())}))
     if account_currency.upper() == "USD":
         summary["NetPnLUSD"] = summary["NetPnLAccount"]
         summary["FinalEquityUSD"] = summary["FinalEquityAccount"]
@@ -1662,6 +1813,9 @@ def render_portfolio_summary(summary: dict[str, float]) -> str:
     entry_signal_cutoff_weekdays = summary.get("EntrySignalCutoffWeekdaysUTC")
     max_signal_age_hours = summary.get("MaxSignalAgeHours")
     signal_relative_volume_threshold = summary.get("SignalRelativeVolumeThreshold")
+    signal_rsi_period = summary.get("SignalRSIPeriod")
+    signal_rsi_buy_max = summary.get("SignalRSIBuyMax")
+    signal_rsi_sell_min = summary.get("SignalRSISellMin")
     breakout_close_buffer_atr_fraction = summary.get("BreakoutCloseBufferAtrFraction")
     partial_take_profit_fraction = summary.get("PartialTakeProfitFraction")
     partial_take_profit_r_multiple = summary.get("PartialTakeProfitRMultiple")
@@ -1707,6 +1861,14 @@ def render_portfolio_summary(summary: dict[str, float]) -> str:
                 f"BreakoutCloseBufferAtrFraction: {float(breakout_close_buffer_atr_fraction):.3f}"
                 if breakout_close_buffer_atr_fraction not in (None, 0, 0.0)
                 else "BreakoutCloseBufferAtrFraction: off"
+            ),
+            (
+                "SignalRSIFilter: "
+                f"period {float(signal_rsi_period):.0f}, buy <= {float(signal_rsi_buy_max):.1f}, sell >= {float(signal_rsi_sell_min):.1f}"
+                if signal_rsi_period not in (None, 0, 0.0)
+                and signal_rsi_buy_max is not None
+                and signal_rsi_sell_min is not None
+                else "SignalRSIFilter: off"
             ),
             f"VWAPDirectionFilter: {'on' if summary.get('VWAPDirectionFilter') else 'off'}",
             (

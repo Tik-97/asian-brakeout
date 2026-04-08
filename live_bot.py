@@ -12,7 +12,7 @@ from data_utils import get_asian_range, parse_candles
 from market_hours import cancel_deadline_for_trade_day, close_deadline_for_trade_day
 from regime_guard import regime_guard_settings_from_strategy, regime_guard_state_updates
 from runtime_state import is_bot_enabled
-from session_utils import current_session_date, parse_utc_timestamp, trade_day_from_runtime_fields
+from session_utils import current_session_date, parse_utc_day, parse_utc_timestamp, trade_day_from_runtime_fields
 from sizing_live import choose_size_for_target_margin_live
 from state import init_symbols, load_state, record_closed_trade, state, update_symbol
 from strategy import (
@@ -35,10 +35,28 @@ def normalize_currency_code(value: Any) -> str:
 def trade_day_from_symbol_state(symbol_state: dict[str, Any], session_start_hour_utc: int) -> dt.date | None:
     return trade_day_from_runtime_fields(
         active_trade_day_utc=symbol_state.get("active_trade_day_utc"),
-        position_opened_at=symbol_state.get("position_opened_at"),
-        working_order_created_at=symbol_state.get("working_order_created_at"),
+        position_opened_at=symbol_state.get("position_opened_at") if symbol_state.get("open_deal_id") else None,
+        working_order_created_at=symbol_state.get("working_order_created_at") if symbol_state.get("working_order_id") else None,
         session_start_hour_utc=session_start_hour_utc,
     )
+
+
+def broker_created_at_from_payload(payload: dict[str, Any] | None) -> dt.datetime | None:
+    raw = payload.get("raw", {}) if isinstance(payload, dict) else {}
+    if not isinstance(raw, dict):
+        return None
+    for candidate in (raw, raw.get("position", {}), raw.get("workingOrder", {})):
+        if not isinstance(candidate, dict):
+            continue
+        for key in ("createdDateUTC", "createdDate", "createdTime", "date"):
+            value = candidate.get(key)
+            parsed_at = parse_utc_timestamp(value)
+            if parsed_at is not None:
+                return parsed_at
+            parsed_day = parse_utc_day(value)
+            if parsed_day is not None:
+                return dt.datetime.combine(parsed_day, dt.time(tzinfo=dt.timezone.utc))
+    return None
 
 
 def count_decimals_from_number(value: float) -> int:
@@ -399,11 +417,130 @@ class AsianBreakoutBot:
                 continue
         return 1.0
 
+    def clear_working_order_state(self, symbol: str, *, clear_active_trade_day: bool = False) -> None:
+        symbol_state = state.get(symbol, {})
+        updates: dict[str, Any] = {
+            "working_order_id": None,
+            "pending_entry": None,
+            "working_order_created_at": None,
+            "pending_direction": symbol_state.get("pending_direction") if symbol_state.get("open_deal_id") else None,
+        }
+        if clear_active_trade_day and not symbol_state.get("open_deal_id"):
+            updates["active_trade_day_utc"] = None
+            updates["trade_taken_today"] = bool(symbol_state.get("daily_trades"))
+        update_symbol(symbol, **updates)
+
+    def resolve_live_order_trade_day(
+        self,
+        symbol_state: dict[str, Any],
+        live_order: dict[str, Any],
+        now_utc: dt.datetime,
+    ) -> dt.date | None:
+        current_order_id = live_order.get("dealId")
+        stored_order_id = symbol_state.get("working_order_id")
+        if stored_order_id and stored_order_id == current_order_id:
+            stored_trade_day = trade_day_from_symbol_state(symbol_state, self.config.strategy.session_start_hour_utc)
+            if stored_trade_day is not None:
+                return stored_trade_day
+
+        active_trade_day = parse_utc_day(symbol_state.get("active_trade_day_utc"))
+        if active_trade_day is not None and not symbol_state.get("open_deal_id"):
+            return active_trade_day
+
+        broker_created_at = broker_created_at_from_payload(live_order)
+        if broker_created_at is not None:
+            return current_session_date(broker_created_at, self.config.strategy.session_start_hour_utc)
+
+        if now_utc.hour < self.config.strategy.entry_start_hour_utc:
+            inferred_trade_day = current_session_date(now_utc, self.config.strategy.session_start_hour_utc)
+            if now_utc.hour >= self.config.strategy.session_start_hour_utc:
+                return inferred_trade_day - dt.timedelta(days=1)
+            return inferred_trade_day
+
+        return None
+
+    def cancel_expired_working_order(
+        self,
+        symbol: str,
+        epic: str,
+        working_order_id: str,
+        order_trade_day: dt.date,
+        *,
+        source: str,
+    ) -> bool:
+        if order_trade_day.weekday() == 4:
+            cancel_reason = "Friday pre-weekend rule"
+        else:
+            cancel_reason = "UTC day expired"
+
+        cancel_result: dict[str, Any] | None = None
+        try:
+            cancel_result = self.api.cancel_working_order(working_order_id)
+        except Exception as error:  # noqa: BLE001
+            self.append_order_audit(symbol, event="working_order_cancel_exception", source=source, error=error)
+        else:
+            self.append_order_audit(
+                symbol,
+                event="working_order_cancel",
+                source=source,
+                result={
+                    "dealId": working_order_id,
+                    "status": cancel_result.get("status"),
+                    "reason": cancel_result.get("reason"),
+                },
+            )
+
+        try:
+            remaining_order = self.api.find_working_order_by_epic(epic)
+        except Exception as error:  # noqa: BLE001
+            self.append_order_audit(symbol, event="working_order_cancel_verify_exception", source=source, error=error)
+            self.send_dedup(
+                f"cancel_verify_failed:{symbol}:{working_order_id}:{order_trade_day}",
+                (
+                    f"<b>{symbol} ORDER CANCEL VERIFY FAILED</b>\n"
+                    f"OrderId: <code>{working_order_id}</code>\n"
+                    f"Reason: <code>{str(error)}</code>"
+                ),
+                ttl_seconds=1800,
+            )
+            return False
+
+        if remaining_order and remaining_order.get("dealId") == working_order_id:
+            self.send_dedup(
+                f"cancel_failed:{symbol}:{working_order_id}:{order_trade_day}",
+                (
+                    f"<b>{symbol} ORDER STILL LIVE</b>\n"
+                    f"Reason: <b>{cancel_reason}</b>\n"
+                    f"OrderId: <code>{working_order_id}</code>"
+                ),
+                ttl_seconds=1800,
+            )
+            return False
+
+        self.clear_working_order_state(symbol, clear_active_trade_day=True)
+        self.send_dedup(
+            f"cancel:{symbol}:{working_order_id}:{order_trade_day}",
+            (
+                f"<b>{symbol} ORDER CANCELED</b>\n"
+                f"Reason: <b>{cancel_reason}</b>\n"
+                f"OrderId: <code>{working_order_id}</code>"
+            ),
+            ttl_seconds=86400,
+        )
+        return True
+
     def ensure_session_state(self, now_utc: dt.datetime) -> None:
         session_date = current_session_date(now_utc, self.config.strategy.session_start_hour_utc)
         for symbol, epic in self.config.strategy.symbols.items():
             symbol_state = state.get(symbol, {})
             active_trade_day = trade_day_from_symbol_state(symbol_state, self.config.strategy.session_start_hour_utc)
+            clear_inactive_trade_day = (
+                not symbol_state.get("open_deal_id")
+                and not symbol_state.get("working_order_id")
+                and not symbol_state.get("daily_trades")
+                and active_trade_day is not None
+                and active_trade_day != session_date
+            )
             if symbol_state.get("session_date") != str(session_date):
                 update_symbol(
                     symbol,
@@ -411,6 +548,11 @@ class AsianBreakoutBot:
                     asian_high=None,
                     asian_low=None,
                     trade_taken_today=bool(symbol_state.get("daily_trades")) or active_trade_day == session_date,
+                    active_trade_day_utc=None if clear_inactive_trade_day else symbol_state.get("active_trade_day_utc"),
+                    position_opened_at=None if clear_inactive_trade_day else symbol_state.get("position_opened_at"),
+                    working_order_created_at=None if clear_inactive_trade_day else symbol_state.get("working_order_created_at"),
+                    pending_entry=None if clear_inactive_trade_day else symbol_state.get("pending_entry"),
+                    pending_direction=None if clear_inactive_trade_day and not symbol_state.get("open_deal_id") else symbol_state.get("pending_direction"),
                     last_processed_signal_candle=None,
                     last_breakout_detected_at=None,
                     last_breakout_side=None,
@@ -464,23 +606,50 @@ class AsianBreakoutBot:
                 update_symbol(symbol, open_deal_id=None, position_opened_at=None)
 
             if live_order:
-                update_symbol(
-                    symbol,
-                    working_order_id=live_order.get("dealId"),
-                    pending_direction=live_order.get("direction"),
-                    pending_entry=live_order.get("level"),
-                    working_order_created_at=symbol_state.get("working_order_created_at") or now_utc.isoformat(),
-                    trade_taken_today=True,
-                    active_trade_day_utc=symbol_state.get("active_trade_day_utc") or str(current_session_date(now_utc, self.config.strategy.session_start_hour_utc)),
-                )
-            elif symbol_state.get("working_order_id"):
-                update_symbol(
-                    symbol,
-                    working_order_id=None,
-                    pending_entry=None,
-                    working_order_created_at=None,
-                    pending_direction=symbol_state.get("pending_direction") if symbol_state.get("open_deal_id") else None,
-                )
+                live_order_id = live_order.get("dealId")
+                live_order_trade_day = self.resolve_live_order_trade_day(symbol_state, live_order, now_utc)
+                if live_order_id and live_order_trade_day and now_utc >= cancel_deadline_for_trade_day(
+                    live_order_trade_day,
+                    weekend_close_hour_utc=self.config.strategy.weekend_close_hour_utc,
+                    weekend_close_minute_utc=self.config.strategy.weekend_close_minute_utc,
+                ):
+                    canceled = self.cancel_expired_working_order(
+                        symbol,
+                        epic,
+                        live_order_id,
+                        live_order_trade_day,
+                        source="broker_sync",
+                    )
+                    if canceled:
+                        live_order = None
+                    else:
+                        live_order = self.api.find_working_order_by_epic(epic)
+                    symbol_state = state.get(symbol, {})
+
+                if live_order:
+                    broker_created_at = broker_created_at_from_payload(live_order)
+                    stored_created_at = (
+                        parse_utc_timestamp(symbol_state.get("working_order_created_at"))
+                        if symbol_state.get("working_order_id") == live_order.get("dealId")
+                        else None
+                    )
+                    resolved_created_at = stored_created_at or broker_created_at
+                    resolved_trade_day = self.resolve_live_order_trade_day(symbol_state, live_order, now_utc)
+                    update_symbol(
+                        symbol,
+                        working_order_id=live_order.get("dealId"),
+                        pending_direction=live_order.get("direction"),
+                        pending_entry=live_order.get("level"),
+                        working_order_created_at=resolved_created_at.isoformat() if resolved_created_at else None,
+                        trade_taken_today=True,
+                        active_trade_day_utc=str(resolved_trade_day) if resolved_trade_day else symbol_state.get("active_trade_day_utc"),
+                    )
+            elif (
+                symbol_state.get("working_order_id")
+                or symbol_state.get("working_order_created_at")
+                or symbol_state.get("pending_entry") is not None
+            ):
+                self.clear_working_order_state(symbol)
 
     def refresh_regime_guards(self, now_utc: dt.datetime) -> None:
         settings = regime_guard_settings_from_strategy(self.config.strategy)
@@ -564,29 +733,12 @@ class AsianBreakoutBot:
                 weekend_close_hour_utc=self.config.strategy.weekend_close_hour_utc,
                 weekend_close_minute_utc=self.config.strategy.weekend_close_minute_utc,
             ):
-                if order_trade_day.weekday() == 4:
-                    cancel_reason = "Friday pre-weekend rule"
-                else:
-                    cancel_reason = "UTC day expired"
-                try:
-                    self.api.cancel_working_order(working_order_id)
-                except Exception:  # noqa: BLE001
-                    pass
-                update_symbol(
+                self.cancel_expired_working_order(
                     symbol,
-                    working_order_id=None,
-                    pending_entry=None,
-                    working_order_created_at=None,
-                    pending_direction=symbol_state.get("pending_direction") if symbol_state.get("open_deal_id") else None,
-                )
-                self.send_dedup(
-                    f"cancel:{symbol}:{working_order_id}:{order_trade_day}",
-                    (
-                        f"<b>{symbol} ORDER CANCELED</b>\n"
-                        f"Reason: <b>{cancel_reason}</b>\n"
-                        f"OrderId: <code>{working_order_id}</code>"
-                    ),
-                    ttl_seconds=86400,
+                    epic,
+                    working_order_id,
+                    order_trade_day,
+                    source="time_boundary",
                 )
 
             symbol_state = state.get(symbol, {})
@@ -851,6 +1003,7 @@ class AsianBreakoutBot:
         startup_now = dt.datetime.now(dt.timezone.utc)
         self.ensure_session_state(startup_now)
         self.sync_live_broker_state(startup_now)
+        self.enforce_time_boundaries(startup_now)
         self.refresh_regime_guards(startup_now)
         self.inspect_recent_closed_signal(startup_now)
         self.send("<b>BOT STARTED</b>\nAsian Breakout backend bot active.")

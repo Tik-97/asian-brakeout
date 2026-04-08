@@ -1,0 +1,8 @@
+.next
+node_modules
+npm-debug.log
+build-output.log
+dev_stdout.log
+dev_stderr.log
+prod_stdout.log
+prod_stderr.log

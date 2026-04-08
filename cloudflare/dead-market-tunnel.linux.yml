@@ -1,0 +1,7 @@
+tunnel: 2e986217-27c7-443c-8b25-e5fcbdde9a86
+credentials-file: /root/.cloudflared/2e986217-27c7-443c-8b25-e5fcbdde9a86.json
+
+ingress:
+  - hostname: app.dead-market.com
+    service: http://127.0.0.1:3000
+  - service: http_status:404

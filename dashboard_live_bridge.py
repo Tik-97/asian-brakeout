@@ -16,8 +16,8 @@ from runtime_state import is_bot_enabled
 from state import load_state
 
 
-LIVE_DASHBOARD_FILE = Path("dashboard/public/data/live_dashboard.json")
-MANUAL_WITHDRAWALS_FILE = Path("dashboard/manual_withdrawals.json")
+LIVE_DASHBOARD_FILE = Path(os.getenv("AB_LIVE_DASHBOARD_FILE", "dashboard/public/data/live_dashboard.json"))
+MANUAL_WITHDRAWALS_FILE = Path(os.getenv("AB_MANUAL_WITHDRAWALS_FILE", "dashboard/manual_withdrawals.json"))
 
 
 def normalize_symbol(value: str | None) -> str:

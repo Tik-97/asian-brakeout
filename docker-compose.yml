@@ -1,0 +1,76 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      AB_STATE_FILE: /app/runtime/state.json
+      AB_RUNTIME_STATE_FILE: /app/runtime/runtime_state.json
+      AB_ORDER_AUDIT_FILE: /app/runtime/order_audit.jsonl
+      AB_JOURNAL_JSON_FILE: /app/runtime/performance_journal.json
+      AB_JOURNAL_CSV_FILE: /app/runtime/performance_journal.csv
+      AB_BACKTEST_OUTPUT_DIR: /app/runtime/backtests
+    volumes:
+      - ./runtime:/app/runtime
+    command: ["python", "-u", "main.py", "--env-file", ".env", "live"]
+
+  bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      AB_STATE_FILE: /app/runtime/state.json
+      AB_RUNTIME_STATE_FILE: /app/runtime/runtime_state.json
+      AB_ORDER_AUDIT_FILE: /app/runtime/order_audit.jsonl
+      AB_JOURNAL_JSON_FILE: /app/runtime/performance_journal.json
+      AB_JOURNAL_CSV_FILE: /app/runtime/performance_journal.csv
+      AB_BACKTEST_OUTPUT_DIR: /app/runtime/backtests
+      AB_LIVE_DASHBOARD_FILE: /app/runtime/dashboard/live_dashboard.json
+      AB_MANUAL_WITHDRAWALS_FILE: /app/runtime/dashboard/manual_withdrawals.json
+    volumes:
+      - ./runtime:/app/runtime
+    command:
+      [
+        "python",
+        "-u",
+        "dashboard_live_bridge.py",
+        "--env-file",
+        ".env",
+        "--interval-seconds",
+        "20",
+        "--output",
+        "/app/runtime/dashboard/live_dashboard.json",
+        "watch"
+      ]
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      AB_LIVE_DASHBOARD_FILE: /app/runtime/dashboard/live_dashboard.json
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    volumes:
+      - ./runtime:/app/runtime
+    depends_on:
+      - bridge
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/live-dashboard >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

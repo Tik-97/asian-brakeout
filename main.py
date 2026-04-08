@@ -87,15 +87,20 @@ def run_backtest(
     entry_signal_cutoff_hour_utc: int | None = None,
     entry_signal_cutoff_weekdays_utc: set[int] | None = None,
     gbpjpy_h4_ema50_trend_filter: bool = False,
+    usdjpy_sell_h4_ema50_trend_filter: bool = False,
     gbpjpy_breakout_buffer_atr_fraction: float = 0.0,
     gbpjpy_entry_signal_cutoff_hour_utc: int | None = None,
     max_signal_age_hours: float | None = None,
     vwap_direction_filter: bool = False,
     signal_relative_volume_threshold: float | None = None,
+    signal_rsi_period: int = 0,
+    signal_rsi_buy_max: float | None = None,
+    signal_rsi_sell_min: float | None = None,
     breakout_close_buffer_atr_fraction: float = 0.0,
     partial_take_profit_fraction: float = 0.0,
     partial_take_profit_r_multiple: float = 1.0,
     gbpjpy_disable_sell: bool = False,
+    disable_sell_symbols: list[str] | None = None,
     output_dir: str | None = None,
 ) -> None:
     config, api, _, _ = build_runtime(env_file)
@@ -126,15 +131,20 @@ def run_backtest(
         entry_signal_cutoff_hour_utc=entry_signal_cutoff_hour_utc,
         entry_signal_cutoff_weekdays_utc=entry_signal_cutoff_weekdays_utc,
         gbpjpy_h4_ema50_trend_filter=gbpjpy_h4_ema50_trend_filter,
+        usdjpy_sell_h4_ema50_trend_filter=usdjpy_sell_h4_ema50_trend_filter,
         gbpjpy_breakout_buffer_atr_fraction=gbpjpy_breakout_buffer_atr_fraction,
         gbpjpy_entry_signal_cutoff_hour_utc=gbpjpy_entry_signal_cutoff_hour_utc,
         max_signal_age_hours=max_signal_age_hours,
         vwap_direction_filter=vwap_direction_filter,
         signal_relative_volume_threshold=resolved_signal_relative_volume_threshold,
+        signal_rsi_period=signal_rsi_period,
+        signal_rsi_buy_max=signal_rsi_buy_max,
+        signal_rsi_sell_min=signal_rsi_sell_min,
         breakout_close_buffer_atr_fraction=breakout_close_buffer_atr_fraction,
         partial_take_profit_fraction=partial_take_profit_fraction,
         partial_take_profit_r_multiple=partial_take_profit_r_multiple,
         gbpjpy_disable_sell=gbpjpy_disable_sell,
+        disable_sell_symbols=set(disable_sell_symbols or []),
     )
     for symbol, summary in summaries.items():
         print(render_summary(symbol, summary))
@@ -158,15 +168,20 @@ def run_backtest(
             entry_signal_cutoff_hour_utc=entry_signal_cutoff_hour_utc,
             entry_signal_cutoff_weekdays_utc=entry_signal_cutoff_weekdays_utc,
             gbpjpy_h4_ema50_trend_filter=gbpjpy_h4_ema50_trend_filter,
+            usdjpy_sell_h4_ema50_trend_filter=usdjpy_sell_h4_ema50_trend_filter,
             gbpjpy_breakout_buffer_atr_fraction=gbpjpy_breakout_buffer_atr_fraction,
             gbpjpy_entry_signal_cutoff_hour_utc=gbpjpy_entry_signal_cutoff_hour_utc,
             max_signal_age_hours=max_signal_age_hours,
             vwap_direction_filter=vwap_direction_filter,
             signal_relative_volume_threshold=resolved_signal_relative_volume_threshold,
+            signal_rsi_period=signal_rsi_period,
+            signal_rsi_buy_max=signal_rsi_buy_max,
+            signal_rsi_sell_min=signal_rsi_sell_min,
             breakout_close_buffer_atr_fraction=breakout_close_buffer_atr_fraction,
             partial_take_profit_fraction=partial_take_profit_fraction,
             partial_take_profit_r_multiple=partial_take_profit_r_multiple,
             gbpjpy_disable_sell=gbpjpy_disable_sell,
+            disable_sell_symbols=set(disable_sell_symbols or []),
         )
         portfolio_dir = config.backtest.output_dir
         portfolio_csv = portfolio_dir / "portfolio_trades.csv"
@@ -241,6 +256,11 @@ def parse_args() -> argparse.Namespace:
         help="Backtest-only filter: for GBPJPY require H4 close above EMA50 for BUY and below EMA50 for SELL",
     )
     backtest.add_argument(
+        "--usdjpy-sell-h4-ema50-trend-filter",
+        action="store_true",
+        help="Backtest-only filter: for USDJPY SELL require H4 close below EMA50",
+    )
+    backtest.add_argument(
         "--gbpjpy-breakout-buffer-atr-fraction",
         type=float,
         default=0.0,
@@ -268,6 +288,22 @@ def parse_args() -> argparse.Namespace:
         help="Backtest-only filter: require signal candle volume divided by the average previous 20 H1 candle volume to be at least this threshold",
     )
     backtest.add_argument(
+        "--signal-rsi-period",
+        type=int,
+        default=0,
+        help="Backtest-only filter: compute RSI on H1 closes using this period; 0 disables the RSI filter",
+    )
+    backtest.add_argument(
+        "--signal-rsi-buy-max",
+        type=float,
+        help="Backtest-only filter: for BUY signals require RSI to be at or below this level",
+    )
+    backtest.add_argument(
+        "--signal-rsi-sell-min",
+        type=float,
+        help="Backtest-only filter: for SELL signals require RSI to be at or above this level",
+    )
+    backtest.add_argument(
         "--breakout-close-buffer-atr-fraction",
         type=float,
         default=0.0,
@@ -289,6 +325,11 @@ def parse_args() -> argparse.Namespace:
         "--gbpjpy-disable-sell",
         action="store_true",
         help="Backtest-only filter: disable GBPJPY SELL trades entirely",
+    )
+    backtest.add_argument(
+        "--disable-sell-symbols",
+        nargs="*",
+        help="Backtest-only filter: disable SELL trades for the listed symbols, for example USDJPY AUDJPY",
     )
     backtest.add_argument("--output-dir", help="Optional backtest output directory relative to project root")
 
@@ -315,6 +356,9 @@ def main() -> None:
                 portfolio_margin_fraction = portfolio_margin_fraction / 100.0
             if not 0 < portfolio_margin_fraction <= 1:
                 raise ValueError("--portfolio-margin-fraction must be between 0 and 1, or between 0 and 100 as a percent")
+        elif args.target_margin is None:
+            config = load_config(args.env_file)
+            portfolio_margin_fraction = float(config.strategy.portfolio_margin_fraction)
         run_backtest(
             args.env_file,
             symbols=args.symbols,
@@ -330,15 +374,20 @@ def main() -> None:
             entry_signal_cutoff_hour_utc=args.entry_signal_cutoff_hour_utc,
             entry_signal_cutoff_weekdays_utc=parse_weekday_list(args.entry_signal_cutoff_weekdays_utc),
             gbpjpy_h4_ema50_trend_filter=args.gbpjpy_h4_ema50_trend_filter,
+            usdjpy_sell_h4_ema50_trend_filter=args.usdjpy_sell_h4_ema50_trend_filter,
             gbpjpy_breakout_buffer_atr_fraction=args.gbpjpy_breakout_buffer_atr_fraction,
             gbpjpy_entry_signal_cutoff_hour_utc=args.gbpjpy_entry_signal_cutoff_hour_utc,
             max_signal_age_hours=args.max_signal_age_hours,
             vwap_direction_filter=args.vwap_direction_filter,
             signal_relative_volume_threshold=args.signal_relative_volume_threshold,
+            signal_rsi_period=args.signal_rsi_period,
+            signal_rsi_buy_max=args.signal_rsi_buy_max,
+            signal_rsi_sell_min=args.signal_rsi_sell_min,
             breakout_close_buffer_atr_fraction=args.breakout_close_buffer_atr_fraction,
             partial_take_profit_fraction=args.partial_take_profit_fraction,
             partial_take_profit_r_multiple=args.partial_take_profit_r_multiple,
             gbpjpy_disable_sell=args.gbpjpy_disable_sell,
+            disable_sell_symbols=args.disable_sell_symbols,
             output_dir=args.output_dir,
         )
         return

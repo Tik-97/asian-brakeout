@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_ROOT = BASE_DIR / r"backtests\yearly_4pair_volume_1_50_study_2020_2026"
+OUTPUT_ROOT = BASE_DIR / r"backtests\2020_2026"
 SYMBOLS = ["USDJPY", "GBPJPY", "EURJPY", "AUDJPY"]
 START_DATE = dt.date(2020, 4, 3)
 END_DATE = dt.date(2026, 4, 3)
@@ -28,7 +28,7 @@ def run_command(command: list[str]) -> None:
 
 
 def summary_file_for(folder: Path) -> Path:
-    matches = sorted(folder.glob("yearly_backtest_*_summary.json"))
+    matches = sorted(folder.glob("*_summary.json"))
     if len(matches) != 1:
         raise FileNotFoundError(f"Expected exactly one summary json in {folder}, found {len(matches)}")
     return matches[0]

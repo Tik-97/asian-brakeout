@@ -279,6 +279,7 @@ function sessionTheme(nowUtc: Date) {
 
 function resolveCharacterMood(data: TradingHouseData, symbol: string): CharacterMood {
   const livePair = data.liveStatus?.pairs?.find((pair) => pair.symbol === symbol);
+  const todayUtc = data.liveStatus?.updated_at_utc?.slice(0, 10) ?? "";
   if (livePair?.has_pending_order) {
     return "waiting";
   }
@@ -292,16 +293,14 @@ function resolveCharacterMood(data: TradingHouseData, symbol: string): Character
     }
     return "idle";
   }
-
-  const room = data.rooms.find((item) => item.symbol === symbol);
-  if (!room) {
-    return "idle";
-  }
-  if (room.lastTradePnl > 0) {
-    return "happy";
-  }
-  if (room.lastTradePnl < 0) {
-    return "angry";
+  if (livePair?.latest_trade_closed_at?.slice(0, 10) === todayUtc) {
+    const latestTradePnl = Number(livePair.latest_trade_pnl ?? 0);
+    if (latestTradePnl > 0) {
+      return "happy";
+    }
+    if (latestTradePnl < 0) {
+      return "angry";
+    }
   }
   return "idle";
 }

@@ -82,7 +82,7 @@ def load_state():
     if isinstance(loaded, dict):
         state.update(loaded)
 
-    normalize_state(save=False)
+    normalize_state(save=True)
 
     return state
 
@@ -152,6 +152,14 @@ def normalize_symbol_state(symbol_state, current_session=None):
 
     latest_daily = normalized_daily[-1] if normalized_daily else None
     active_trade_day = _active_trade_day_for_symbol(symbol_state)
+    no_live_exposure = not symbol_state.get("open_deal_id") and not symbol_state.get("working_order_id")
+    if no_live_exposure and not normalized_daily and active_trade_day != current_session:
+        symbol_state["active_trade_day_utc"] = None
+        symbol_state["position_opened_at"] = None
+        symbol_state["working_order_created_at"] = None
+        symbol_state["pending_entry"] = None
+        symbol_state["pending_direction"] = None
+        active_trade_day = None
     has_session_activity = bool(normalized_daily or active_trade_day == current_session)
 
     symbol_state["session_date"] = current_session_str
@@ -165,7 +173,7 @@ def normalize_symbol_state(symbol_state, current_session=None):
         symbol_state["last_closed_deal_id"] = latest_daily.get("deal_id")
         symbol_state["last_trade_result"] = latest_daily.get("result")
         symbol_state["last_trade_direction"] = latest_daily.get("direction") or symbol_state.get("last_trade_direction")
-    elif not symbol_state.get("open_deal_id") and not symbol_state.get("working_order_id"):
+    elif no_live_exposure:
         symbol_state["last_closed_pnl"] = None
         symbol_state["last_closed_at"] = None
         symbol_state["last_closed_deal_id"] = None
@@ -217,8 +225,8 @@ def _session_date_for_timestamp(closed_at):
 def _active_trade_day_for_symbol(symbol_state):
     return trade_day_from_runtime_fields(
         active_trade_day_utc=symbol_state.get("active_trade_day_utc"),
-        position_opened_at=symbol_state.get("position_opened_at"),
-        working_order_created_at=symbol_state.get("working_order_created_at"),
+        position_opened_at=symbol_state.get("position_opened_at") if symbol_state.get("open_deal_id") else None,
+        working_order_created_at=symbol_state.get("working_order_created_at") if symbol_state.get("working_order_id") else None,
     )
 
 

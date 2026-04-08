@@ -51,18 +51,23 @@ def round2(value: float) -> float:
     return round(float(value), 2)
 
 
-def build_line_path(values: list[float], width: int, height: int, padding: int) -> str:
+def build_line_path(
+    values: list[float],
+    *,
+    min_value: float,
+    max_value: float,
+    x_start: float,
+    y_start: float,
+    plot_width: float,
+    plot_height: float,
+) -> str:
     if not values:
         return ""
-    low = min(values)
-    high = max(values)
-    span = high - low or 1.0
-    inner_width = max(width - (padding * 2), 1)
-    inner_height = max(height - (padding * 2), 1)
+    span = max_value - min_value or 1.0
     points: list[str] = []
     for index, value in enumerate(values):
-        x = padding + (index / max(len(values) - 1, 1)) * inner_width
-        y = padding + (1 - ((value - low) / span)) * inner_height
+        x = x_start + (index / max(len(values) - 1, 1)) * plot_width
+        y = y_start + (1 - ((value - min_value) / span)) * plot_height
         points.append(f"{x:.2f},{y:.2f}")
     if not points:
         return ""
@@ -71,10 +76,27 @@ def build_line_path(values: list[float], width: int, height: int, padding: int) 
     return "M " + first.replace(",", " ") + "".join(f" L {point.replace(',', ' ')}" for point in rest)
 
 
-def render_equity_svg(events_df: pd.DataFrame, output_path: Path) -> None:
+def month_tick_labels(from_date: str, to_date: str) -> list[tuple[str, str]]:
+    start = dt.date.fromisoformat(from_date)
+    end = dt.date.fromisoformat(to_date)
+    current = dt.date(start.year, start.month, 1)
+    labels: list[tuple[str, str]] = []
+    while current <= end:
+        labels.append((current.isoformat(), current.strftime("%b %Y")))
+        if current.month == 12:
+            current = dt.date(current.year + 1, 1, 1)
+        else:
+            current = dt.date(current.year, current.month + 1, 1)
+    return labels
+
+
+def render_equity_svg(events_df: pd.DataFrame, output_path: Path, *, from_date: str, to_date: str) -> None:
     width = 900
     height = 440
-    padding = 36
+    padding_left = 76
+    padding_right = 28
+    padding_top = 48
+    padding_bottom = 62
     trading_values = [float(value) for value in events_df["trading_equity"].tolist()] if not events_df.empty else []
     total_values = [float(value) for value in events_df["total_value"].tolist()] if not events_df.empty else []
     if not trading_values:
@@ -87,17 +109,74 @@ def render_equity_svg(events_df: pd.DataFrame, output_path: Path) -> None:
     max_value = max(all_values)
     low_text = f"${min_value:,.2f}"
     high_text = f"${max_value:,.2f}"
-    trading_path = build_line_path(trading_values, width, height, padding)
-    total_path = build_line_path(total_values, width, height, padding)
+    plot_width = width - padding_left - padding_right
+    plot_height = height - padding_top - padding_bottom
+    trading_path = build_line_path(
+        trading_values,
+        min_value=min_value,
+        max_value=max_value,
+        x_start=padding_left,
+        y_start=padding_top,
+        plot_width=plot_width,
+        plot_height=plot_height,
+    )
+    total_path = build_line_path(
+        total_values,
+        min_value=min_value,
+        max_value=max_value,
+        x_start=padding_left,
+        y_start=padding_top,
+        plot_width=plot_width,
+        plot_height=plot_height,
+    )
+
+    x_axis_y = padding_top + plot_height
+    y_axis_x = padding_left
+    month_labels = month_tick_labels(from_date, to_date)
+    date_span_days = max((dt.date.fromisoformat(to_date) - dt.date.fromisoformat(from_date)).days, 1)
+    month_label_svg: list[str] = []
+    tick_line_svg: list[str] = []
+    for month_iso, label in month_labels:
+        tick_date = dt.date.fromisoformat(month_iso)
+        x = y_axis_x + (((tick_date - dt.date.fromisoformat(from_date)).days) / date_span_days) * plot_width
+        tick_line_svg.append(
+            f'<line x1="{x:.2f}" y1="{padding_top}" x2="{x:.2f}" y2="{x_axis_y}" stroke="#222938" stroke-width="1" opacity="0.7"/>'
+        )
+        month_label_svg.append(
+            f'<text x="{x:.2f}" y="{x_axis_y + 18}" text-anchor="middle" fill="#9ca3af" font-family="Consolas, \'Courier New\', monospace" font-size="11">{label}</text>'
+        )
+
+    y_ticks = 5
+    y_tick_svg: list[str] = []
+    y_label_svg: list[str] = []
+    for index in range(y_ticks + 1):
+        value = min_value + ((max_value - min_value) * index / y_ticks if y_ticks else 0.0)
+        y = padding_top + plot_height - (plot_height * index / y_ticks if y_ticks else 0.0)
+        y_tick_svg.append(
+            f'<line x1="{y_axis_x}" y1="{y:.2f}" x2="{width - padding_right}" y2="{y:.2f}" stroke="#222938" stroke-width="1" opacity="0.7"/>'
+        )
+        y_label_svg.append(
+            f'<text x="{y_axis_x - 10}" y="{y + 4:.2f}" text-anchor="end" fill="#9ca3af" font-family="Consolas, \'Courier New\', monospace" font-size="11">${value:,.0f}</text>'
+        )
+
+    title = f"{from_date} to {to_date} Portfolio Equity"
 
     svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-label="Portfolio equity curve">
   <rect width="{width}" height="{height}" fill="#0f1117"/>
   <rect x="1" y="1" width="{width - 2}" height="{height - 2}" fill="none" stroke="#262b38" stroke-width="2"/>
-  <text x="{padding}" y="28" fill="#f3f4f6" font-family="Consolas, 'Courier New', monospace" font-size="18">2025-2026 Portfolio Equity</text>
-  <text x="{padding}" y="{height - 12}" fill="#9ca3af" font-family="Consolas, 'Courier New', monospace" font-size="12">Trading equity</text>
-  <text x="{padding + 110}" y="{height - 12}" fill="#f59e0b" font-family="Consolas, 'Courier New', monospace" font-size="12">Total value</text>
-  <text x="{width - padding}" y="28" text-anchor="end" fill="#9ca3af" font-family="Consolas, 'Courier New', monospace" font-size="12">High {high_text}</text>
-  <text x="{width - padding}" y="{height - 12}" text-anchor="end" fill="#9ca3af" font-family="Consolas, 'Courier New', monospace" font-size="12">Low {low_text}</text>
+  <text x="{padding_left}" y="28" fill="#f3f4f6" font-family="Consolas, 'Courier New', monospace" font-size="18">{title}</text>
+  <text x="{padding_left}" y="{height - 12}" fill="#9ca3af" font-family="Consolas, 'Courier New', monospace" font-size="12">Trading equity</text>
+  <text x="{padding_left + 110}" y="{height - 12}" fill="#f59e0b" font-family="Consolas, 'Courier New', monospace" font-size="12">Total value</text>
+  <text x="{width - padding_right}" y="28" text-anchor="end" fill="#9ca3af" font-family="Consolas, 'Courier New', monospace" font-size="12">High {high_text}</text>
+  <text x="{width - padding_right}" y="{height - 12}" text-anchor="end" fill="#9ca3af" font-family="Consolas, 'Courier New', monospace" font-size="12">Low {low_text}</text>
+  <text x="{width / 2:.2f}" y="{height - 34}" text-anchor="middle" fill="#cbd5e1" font-family="Consolas, 'Courier New', monospace" font-size="12">Month</text>
+  <text x="20" y="{padding_top + (plot_height / 2):.2f}" transform="rotate(-90 20 {padding_top + (plot_height / 2):.2f})" text-anchor="middle" fill="#cbd5e1" font-family="Consolas, 'Courier New', monospace" font-size="12">Balance (USD)</text>
+  {''.join(y_tick_svg)}
+  {''.join(tick_line_svg)}
+  <line x1="{y_axis_x}" y1="{padding_top}" x2="{y_axis_x}" y2="{x_axis_y}" stroke="#64748b" stroke-width="2"/>
+  <line x1="{y_axis_x}" y1="{x_axis_y}" x2="{width - padding_right}" y2="{x_axis_y}" stroke="#64748b" stroke-width="2"/>
+  {''.join(y_label_svg)}
+  {''.join(month_label_svg)}
   <path d="{trading_path}" fill="none" stroke="#60a5fa" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="{total_path}" fill="none" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
 </svg>
@@ -474,7 +553,7 @@ def main() -> None:
     withdrawals_df.to_csv(output_dir / f"{prefix}_withdrawals.csv", index=False)
     (output_dir / f"{prefix}_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     (output_dir / f"{prefix}_summary.txt").write_text(render_summary_text(summary), encoding="utf-8")
-    render_equity_svg(events_df, output_dir / f"{prefix}.svg")
+    render_equity_svg(events_df, output_dir / f"{prefix}.svg", from_date=args.from_date, to_date=args.to_date)
 
 
 if __name__ == "__main__":

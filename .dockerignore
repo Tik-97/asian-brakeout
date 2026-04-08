@@ -1,0 +1,15 @@
+.git
+.gitignore
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+.env
+runtime
+backtests
+cloudflare
+dashboard/.next
+dashboard/node_modules
+dashboard/public/data/live_dashboard.json

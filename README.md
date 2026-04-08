@@ -8,6 +8,8 @@ Backend-only Capital.com DEMO bot for the Asian breakout strategy.
    `pip install -r requirements.txt`
 2. Copy `.env.example` to `.env`
 3. Fill in your Capital.com and Telegram credentials
+4. Full Russian operations guide:
+   [README_RU.md](/C:/Users/Tigran/Desktop/Asian%20Brakeout/README_RU.md)
 
 ## Main commands
 
@@ -53,6 +55,7 @@ The backtest is based on Capital.com H1 broker history and uses the live strateg
 - breakout confirmation from closed H1 candles
 - ATR filter
 - entry at Asian high/low
+- Volatility >1,5 filter
 - TP/SL from ATR
 - forced time exit at `08:59 UTC` next day
 - H1 backtest history is capped to the latest `1000` broker candles per symbol
@@ -60,6 +63,7 @@ The backtest is based on Capital.com H1 broker history and uses the live strateg
 ## Notes
 
 - Telegram remains supported and can show a Mini App dashboard button when `AB_TELEGRAM_MINI_APP_URL` is set.
+- For Ubuntu/Linux Docker deployment, use [DOCKER_DEPLOY.md](/C:/Users/Tigran/Desktop/Asian%20Brakeout/DOCKER_DEPLOY.md)
 - For live hosting directly from your computer through Cloudflare Tunnel, run:
   `python host_telegram_miniapp.py`
   This reuses or starts the local dashboard, opens a Cloudflare quick tunnel, and updates the Telegram Mini App menu button to the public tunnel URL.
