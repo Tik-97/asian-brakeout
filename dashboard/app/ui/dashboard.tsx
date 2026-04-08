@@ -2,7 +2,7 @@
 
 import { startTransition, useEffect, useMemo, useState } from "react";
 
-import type { TradingHouseData } from "../lib/dashboard-data";
+import type { LivePairStatus, TradingHouseData } from "../lib/dashboard-data";
 
 const pairLogos: Record<string, string> = {
   GBPJPY: "/gbp-jpy.svg",
@@ -316,6 +316,49 @@ function moodSpeech(mood: CharacterMood) {
     return "Come on...";
   }
   return "...";
+}
+
+function traderSpeech(data: TradingHouseData, symbol: string, mood: CharacterMood) {
+  const livePair = data.liveStatus?.pairs?.find((pair) => pair.symbol === symbol);
+  if (livePair?.has_open_position) {
+    return "Let's do it";
+  }
+  if (livePair?.block_reason) {
+    return "⚠️";
+  }
+  if (livePair?.has_pending_order) {
+    return "On it...";
+  }
+  return moodSpeech(mood);
+}
+
+function previewPairStatus(livePair: LivePairStatus | undefined) {
+  if (livePair?.has_open_position) {
+    return { label: "Open", className: "state-open" };
+  }
+  if (livePair?.has_pending_order) {
+    return { label: "Pending", className: "state-pending" };
+  }
+  if (livePair?.block_reason) {
+    return { label: "Blocked", className: "state-blocked" };
+  }
+  if (livePair?.breakout_detected) {
+    return { label: "Triggered", className: "state-triggered" };
+  }
+  return { label: "Watching", className: "state-idle" };
+}
+
+function previewPairDetail(livePair: LivePairStatus | undefined, fallbackWinRate: number) {
+  if (livePair?.has_open_position) {
+    return `P&L ${formatMoney(Number(livePair.open_pnl ?? 0))}`;
+  }
+  if (livePair?.has_pending_order && livePair.entry !== undefined) {
+    return `Entry ${formatLevel(livePair.entry)}`;
+  }
+  if (livePair?.block_reason) {
+    return "No entry";
+  }
+  return `${formatPct(fallbackWinRate)} WR`;
 }
 
 function formatLevel(value: number | string | undefined) {
@@ -668,6 +711,22 @@ export function Dashboard({ data }: { data: TradingHouseData }) {
       ? roomConfigs[traderDialogue.room].promptSprite
       : roomConfigs[traderDialogue.room].characters[traderDialogue.symbol]?.idle ?? ""
     : "";
+  const activeRoomPairs = activeScene.traders.map((symbol) => {
+    const livePair = currentData.liveStatus?.pairs?.find((pair) => pair.symbol === symbol);
+    const roomData = currentData.rooms.find((room) => room.symbol === symbol);
+    return {
+      symbol,
+      livePair,
+      roomData,
+      status: previewPairStatus(livePair),
+      detail: previewPairDetail(livePair, roomData?.winRatePct ?? 0),
+    };
+  });
+  const activeRoomTradeCount = activeRoomPairs.reduce(
+    (sum, item) => sum + (item.roomData?.wins ?? 0) + (item.roomData?.losses ?? 0),
+    0,
+  );
+  const activeRoomOpenCount = activeRoomPairs.filter((item) => item.livePair?.has_open_position).length;
 
   const topMetrics = [
     { label: "Time", value: nowUtc ? `UTC ${nowUtc.toISOString().slice(11, 19)}` : "UTC --:--:--" },
@@ -809,7 +868,7 @@ export function Dashboard({ data }: { data: TradingHouseData }) {
               aria-label={`Talk to ${trader.character.name}`}
             >
               <div className={`speech-pop mood-${trader.mood}`}>
-                <span>{moodSpeech(trader.mood)}</span>
+                <span>{traderSpeech(currentData, trader.symbol, trader.mood)}</span>
               </div>
                 <img
                   src={trader.character[trader.mood]}
@@ -826,9 +885,34 @@ export function Dashboard({ data }: { data: TradingHouseData }) {
             aria-label="Open dashboard"
           >
             <img src={activeScene.dashboardSrc} alt="Dashboard terminal" className="terminal-image" />
-            <div className="terminal-label">
-              <span>Click to</span>
-              <span>see stats</span>
+            <div className="terminal-board">
+              <div className="terminal-board-grid">
+                <div>
+                  <span>Trades</span>
+                  <strong>{activeRoomTradeCount}</strong>
+                </div>
+                <div>
+                  <span>Open</span>
+                  <strong>{activeRoomOpenCount}</strong>
+                </div>
+              </div>
+
+              <div className="terminal-board-list">
+                {activeRoomPairs.map((pair) => (
+                  <div key={pair.symbol} className="terminal-board-row">
+                    <span className="terminal-board-pair">
+                      {renderPairBadge(pair.symbol, "tiny")}
+                      {pair.symbol}
+                    </span>
+                    <span className={`terminal-board-state ${pair.status.className}`}>{pair.status.label}</span>
+                    <small>{pair.detail}</small>
+                  </div>
+                ))}
+              </div>
+
+              <div className="terminal-board-footer">
+                <strong>Tap to open full stats</strong>
+              </div>
             </div>
           </button>
 
