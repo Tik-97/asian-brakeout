@@ -11,7 +11,7 @@ This project can run fully from your own computer:
 
 Double-click:
 
-- [Start Dead Market.cmd](/C:/Users/Tigran/Desktop/Asian%20Brakeout/Start%20Dead%20Market.cmd)
+- [Start Dead Market.cmd](Start%20Dead%20Market.cmd)
 
 That starts:
 
@@ -24,7 +24,7 @@ That starts:
 
 Double-click:
 
-- [Stop Dead Market.cmd](/C:/Users/Tigran/Desktop/Asian%20Brakeout/Stop%20Dead%20Market.cmd)
+- [Stop Dead Market.cmd](Stop%20Dead%20Market.cmd)
 
 ## Public and local addresses
 
@@ -34,7 +34,7 @@ Double-click:
 ## After a computer restart
 
 1. Make sure internet is connected.
-2. Double-click [Start Dead Market.cmd](/C:/Users/Tigran/Desktop/Asian%20Brakeout/Start%20Dead%20Market.cmd).
+2. Double-click [Start Dead Market.cmd](Start%20Dead%20Market.cmd).
 3. Wait about `10-30` seconds.
 4. Open `https://app.dead-market.com` or Telegram Mini App.
 
@@ -70,7 +70,7 @@ Runtime logs are saved in:
 
 ## If something does not open
 
-1. Double-click [Stop Dead Market.cmd](/C:/Users/Tigran/Desktop/Asian%20Brakeout/Stop%20Dead%20Market.cmd)
+1. Double-click [Stop Dead Market.cmd](Stop%20Dead%20Market.cmd)
 2. Wait `3-5` seconds
-3. Double-click [Start Dead Market.cmd](/C:/Users/Tigran/Desktop/Asian%20Brakeout/Start%20Dead%20Market.cmd)
+3. Double-click [Start Dead Market.cmd](Start%20Dead%20Market.cmd)
 4. If needed, read the logs in `runtime/logs`

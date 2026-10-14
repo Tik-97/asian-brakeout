@@ -9,7 +9,7 @@ Backend-only Capital.com DEMO bot for the Asian breakout strategy.
 2. Copy `.env.example` to `.env`
 3. Fill in your Capital.com and Telegram credentials
 4. Full Russian operations guide:
-   [README_RU.md](/C:/Users/Tigran/Desktop/Asian%20Brakeout/README_RU.md)
+   [README_RU.md](README_RU.md)
 
 ## Main commands
 
@@ -63,13 +63,13 @@ The backtest is based on Capital.com H1 broker history and uses the live strateg
 ## Notes
 
 - Telegram remains supported and can show a Mini App dashboard button when `AB_TELEGRAM_MINI_APP_URL` is set.
-- For Ubuntu/Linux Docker deployment, use [DOCKER_DEPLOY.md](/C:/Users/Tigran/Desktop/Asian%20Brakeout/DOCKER_DEPLOY.md)
+- For Ubuntu/Linux Docker deployment, use [DOCKER_DEPLOY.md](DOCKER_DEPLOY.md)
 - For live hosting directly from your computer through Cloudflare Tunnel, run:
   `python host_telegram_miniapp.py`
   This reuses or starts the local dashboard, opens a Cloudflare quick tunnel, and updates the Telegram Mini App menu button to the public tunnel URL.
 - For the permanent `dead-market.com` live setup from your computer, use:
-  - [Start Dead Market.cmd](/C:/Users/Tigran/Desktop/Asian%20Brakeout/Start%20Dead%20Market.cmd)
-  - [Stop Dead Market.cmd](/C:/Users/Tigran/Desktop/Asian%20Brakeout/Stop%20Dead%20Market.cmd)
-  - full guide: [LIVE_LOCAL_SETUP.md](/C:/Users/Tigran/Desktop/Asian%20Brakeout/LIVE_LOCAL_SETUP.md)
+  - [Start Dead Market.cmd](Start%20Dead%20Market.cmd)
+  - [Stop Dead Market.cmd](Stop%20Dead%20Market.cmd)
+  - full guide: [LIVE_LOCAL_SETUP.md](LIVE_LOCAL_SETUP.md)
 - FastAPI/frontend code was removed from this folder.
 - Stats are built from the local trade journal in `state.json`.

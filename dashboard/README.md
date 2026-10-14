@@ -52,7 +52,7 @@ For a clean live-account reset, the dashboard bridge now supports:
 
 Manual withdrawals can be recorded in:
 
-- [manual_withdrawals.json](C:/Users/Tigran/Desktop/Asian%20Brakeout/dashboard/manual_withdrawals.json)
+- [manual_withdrawals.json](manual_withdrawals.json)
 
 Use an array like:
 
